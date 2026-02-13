@@ -10,12 +10,12 @@ Complete parts list for building the Nightwatch monitoring system.
 
 | Phase | Components | Estimated Cost |
 |-------|------------|----------------|
-| Core Platform | Pi 5, power, SD card, case | ~$95 |
-| Phase 1: Radar | LD2450, USB-UART adapter, USB cable, wires | ~$35 |
-| Phase 2: Audio | USB microphone | ~$20 |
+| Core Platform | Pi 5, power, SD card, case | ~$96 |
+| Phase 1: Radar | LD2450, USB-C adapter, USB cable, wires | ~$39 |
+| Phase 2: Audio | Lavalier mic + gooseneck mount | ~$30 |
 | Phase 3: BCG | Piezo, amp, ADC | ~$45 |
 | Notifications | Speaker, buzzer | ~$15 |
-| **Total** | | **~$210** |
+| **Total** | | **~$225** |
 
 ---
 
@@ -25,9 +25,8 @@ Complete parts list for building the Nightwatch monitoring system.
 
 | Item | Spec | Price | Link |
 |------|------|-------|------|
-| **Raspberry Pi 5 4GB** | Main computer | $60 | [RPi Official](https://www.raspberrypi.com/products/raspberry-pi-5/) |
-| | | | [Adafruit](https://www.adafruit.com/product/5812) |
-| | | | [Amazon](https://www.amazon.com/dp/B0CPWH8FL9) |
+| **Raspberry Pi 5 4GB** | Main computer | $60 | [Adafruit](https://www.adafruit.com/product/5812) |
+| | | | [Amazon](https://www.amazon.com/dp/B0CK3L9WD3) |
 
 **Note:** 4GB is sufficient. 8GB only needed if you plan heavy ML processing.
 
@@ -35,8 +34,7 @@ Complete parts list for building the Nightwatch monitoring system.
 
 | Item | Spec | Price | Link |
 |------|------|-------|------|
-| **Official Pi 5 PSU (27W)** | 5V/5A USB-C | $12 | [RPi Official](https://www.raspberrypi.com/products/27w-power-supply/) |
-| | | | [Adafruit](https://www.adafruit.com/product/5814) |
+| **Official Pi 5 PSU (27W)** | 5V/5A USB-C | $12 | [Adafruit](https://www.adafruit.com/product/5814) |
 
 **Important:** The Pi 5 needs more power than previous models. Use the official 27W supply for reliable operation.
 
@@ -44,7 +42,7 @@ Complete parts list for building the Nightwatch monitoring system.
 
 | Item | Spec | Price | Link |
 |------|------|-------|------|
-| **MicroSD Card 32GB+** | Class 10 / A2 | $10-15 | [Samsung EVO Select 64GB](https://www.amazon.com/dp/B09B1HMJ9Z) |
+| **MicroSD Card 32GB+** | Class 10 / A2 | $10-15 | [Samsung EVO Select 64GB (2024)](https://www.amazon.com/dp/B0CWPNFH9M) |
 | | | | [SanDisk Extreme 64GB](https://www.amazon.com/dp/B09X7BK27V) |
 
 **Tip:** Get at least 32GB. 64GB gives room for recording data.
@@ -53,8 +51,7 @@ Complete parts list for building the Nightwatch monitoring system.
 
 | Item | Spec | Price | Link |
 |------|------|-------|------|
-| **Pi 5 Case with Fan** | Active cooling | $10-15 | [Official Pi 5 Case](https://www.raspberrypi.com/products/raspberry-pi-5-case/) |
-| | | | [Argon ONE V3](https://www.amazon.com/dp/B0CPYNJVBZ) |
+| **Pi 5 Case with Fan** | Active cooling | $10-15 | [Argon ONE V3](https://www.amazon.com/dp/B0CNGSXGT2) |
 | **OR: 3D Print** | Custom design | $0 | STL files in `/hardware/3d_prints/` |
 
 ---
@@ -65,8 +62,8 @@ Complete parts list for building the Nightwatch monitoring system.
 
 | Item | Spec | Price | Link |
 |------|------|-------|------|
-| **HLK-LD2450** | 24GHz mmWave radar | $15-20 | [AliExpress](https://www.aliexpress.com/item/1005005873296498.html) |
-| | Multi-target tracking | | [Amazon](https://www.amazon.com/dp/B0CG2Z3GGV) |
+| **HLK-LD2450** | 24GHz mmWave radar | $15-20 | [Amazon (Ruitutedianzi)](https://www.amazon.com/dp/B0DP6QLQZV) |
+| | Multi-target tracking | | [Amazon (ZORZA)](https://www.amazon.com/dp/B0D46LY4P8) |
 | | UART output | | |
 
 **Alternative:** HLK-LD2410C ($12-15) - Simpler but less features
@@ -77,10 +74,9 @@ Allows the radar to be wall-mounted away from the Pi with just a USB cable.
 
 | Item | Spec | Price | Link |
 |------|------|-------|------|
-| **CP2102 USB-to-TTL** | 3.3V/5V, 6-pin | $3-5 | [Amazon](https://www.amazon.com/dp/B00LODGRV8) |
-| | | | [AliExpress (cheaper)](https://www.aliexpress.com/item/32617292737.html) |
-| **CH340 USB-to-TTL** | Alternative, common | $3-4 | [Amazon](https://www.amazon.com/dp/B0BKBWZXJK) |
-| **USB Extension Cable** | 6ft or 10ft, USB-A | $6-8 | [Amazon 10ft](https://www.amazon.com/dp/B00NH11R3I) |
+| **CP2102 USB-C to TTL** | 3.3V/5V switchable, USB-C port | $8 | [Amazon XICOOLEE](https://www.amazon.com/dp/B0C8RRDCXB) |
+| **USB-A to USB-C Cable** | 10ft, for wall-mounted radar | $8 | [Amazon 10ft](https://www.amazon.com/dp/B01LONPOV2) |
+| | (or use any long USB-C cable you have) | | |
 
 **Wiring (Radar to CP2102):**
 ```
@@ -116,27 +112,12 @@ RX    <───  TX
 
 | Item | Spec | Price | Link |
 |------|------|-------|------|
-| **MAONO AU-903** | USB condenser, omnidirectional | $20 | [Amazon](https://www.amazon.com/dp/B09LY6RCNJ) |
-| **Fifine K669** | USB condenser, cardioid | $18 | [Amazon](https://www.amazon.com/dp/B06XCKGLTP) |
-| **Blue Snowball iCE** | USB condenser | $40 | [Amazon](https://www.amazon.com/dp/B014PYGTUQ) |
+| **FIFINE K053 Lavalier** | Cardioid, clip-on, small | $16 | [Amazon](https://www.amazon.com/dp/B077VNGVL2) |
+| **Gooseneck Clamp Mount** | Flexible arm for aiming mic | $14 | [Amazon Tryone](https://www.amazon.com/dp/B0777JP14F) |
 
-**Recommended:** MAONO AU-903 - omnidirectional picks up breathing from any direction
+**Recommended:** FIFINE K053 - cardioid pattern rejects sound from sides (important with multiple people in room). Mount on gooseneck clamp and aim at bed.
 
-### Alternative: Lavalier Mic + USB Adapter
-
-| Item | Spec | Price | Link |
-|------|------|-------|------|
-| **Lavalier Microphone** | 3.5mm, clip-on | $10 | [Amazon](https://www.amazon.com/dp/B01AG56HYQ) |
-| **USB Audio Adapter** | 3.5mm to USB | $8 | [Amazon](https://www.amazon.com/dp/B00IRVQ0F8) |
-
-**Pro:** Smaller, easier to position. **Con:** Two pieces to connect.
-
-### Mounting
-
-| Item | Spec | Price | Link |
-|------|------|-------|------|
-| **Gooseneck Mic Stand** | Flexible positioning | $12 | [Amazon](https://www.amazon.com/dp/B082WH4ZNB) |
-| **OR: 3D Printed Mount** | Custom bracket | $0 | STL in `/hardware/3d_prints/` |
+**Tip:** You may need to 3D print a small adapter to hold the lavalier capsule on the gooseneck arm.
 
 ---
 
@@ -147,8 +128,8 @@ RX    <───  TX
 | Item | Spec | Price | Link |
 |------|------|-------|------|
 | **Large Piezo Film** | PVDF, 100mm+ | $15-25 | [SparkFun Piezo](https://www.sparkfun.com/products/10293) |
-| | | | [Measurement Specialties](https://www.digikey.com/en/products/detail/te-connectivity-measurement-specialties/1-1002908-0/2704850) |
-| **Piezo Element (Disc)** | 35mm disc (simpler) | $3-5 | [Amazon 10-pack](https://www.amazon.com/dp/B07K16ZFWP) |
+| **Piezo Element (Disc)** | 35mm disc (simpler) | $3-5 | [Amazon 20-pack](https://www.amazon.com/dp/B01N5HN94S) |
+| | | | [Amazon DZS Elec 15-pack](https://www.amazon.com/dp/B084KHH7B6) |
 
 **Note:** Large film sensors work better but cost more. Start with disc for testing.
 
@@ -157,7 +138,7 @@ RX    <───  TX
 | Item | Spec | Price | Link |
 |------|------|-------|------|
 | **MCP3008 ADC** | 8-ch 10-bit SPI ADC | $4 | [Adafruit](https://www.adafruit.com/product/856) |
-| | | | [Amazon](https://www.amazon.com/dp/B00NAY3RB2) |
+| | | | [Amazon 4-pack](https://www.amazon.com/dp/B01HGCSGXM) |
 | **LM358 Op-Amp** | Dual op-amp | $1 | [Amazon 10-pack](https://www.amazon.com/dp/B07WQWPLSP) |
 | **Resistors** | Assorted kit | $8 | [Amazon](https://www.amazon.com/dp/B08FD1XVL6) |
 | **Capacitors** | Assorted ceramic | $8 | [Amazon](https://www.amazon.com/dp/B07PP7SFY3) |
@@ -175,7 +156,7 @@ RX    <───  TX
 
 | Item | Spec | Price | Link |
 |------|------|-------|------|
-| **50kg Load Cell x4** | Strain gauge | $15 | [Amazon 4-pack](https://www.amazon.com/dp/B07TWLP3X8) |
+| **50kg Load Cell x4** | Strain gauge + HX711 | $15 | [Amazon Geekstory Kit](https://www.amazon.com/dp/B079FTXR7Y) |
 | **HX711 ADC** | 24-bit load cell ADC | $5 | [Amazon 2-pack](https://www.amazon.com/dp/B07MTYT95R) |
 
 **Note:** More complex to install but very accurate.
@@ -241,7 +222,7 @@ Files will be in `/hardware/3d_prints/`:
 
 ## Shopping by Phase
 
-### Phase 1 Order (~$130)
+### Phase 1 Order (~$135)
 *Get monitoring working with radar*
 
 - [ ] Raspberry Pi 5 (4GB) - $60
@@ -249,15 +230,15 @@ Files will be in `/hardware/3d_prints/`:
 - [ ] MicroSD Card 64GB - $12
 - [ ] Pi 5 Case with Fan - $12
 - [ ] HLK-LD2450 Radar - $18
-- [ ] CP2102 USB-to-TTL Adapter - $4
-- [ ] USB Extension Cable (10ft) - $7
+- [ ] CP2102 USB-C to TTL Adapter - $8
+- [ ] USB-A to USB-C Cable (10ft) - $8
 - [ ] Dupont Jumper Wires - $5
 
-### Phase 2 Add-on ($25)
+### Phase 2 Add-on ($30)
 *Add audio for redundancy*
 
-- [ ] MAONO AU-903 USB Mic - $20
-- [ ] Gooseneck Stand - $5
+- [ ] FIFINE K053 Lavalier Mic - $16
+- [ ] Gooseneck Clamp Mount - $14
 
 ### Phase 3 Add-on ($45)
 *Add BCG for accurate heart rate*
@@ -304,12 +285,12 @@ Files will be in `/hardware/3d_prints/`:
 1. Raspberry Pi 5 4GB - $60
 2. 27W Power Supply - $12
 3. 64GB MicroSD Card - $12
-4. HLK-LD2450 Radar (AliExpress for price, Amazon for speed) - $18
-5. CP2102 USB-to-TTL adapter - $4
-6. USB extension cable (6-10ft) - $7
+4. HLK-LD2450 Radar - $18
+5. CP2102 USB-C to TTL adapter - $8
+6. USB-A to USB-C cable (10ft) - $8
 7. Dupont wires - $5
 
-**Total: ~$118**
+**Total: ~$123**
 
 This gets you a working radar-based monitoring system with proper wall mounting capability. Add audio and BCG as budget allows.
 
