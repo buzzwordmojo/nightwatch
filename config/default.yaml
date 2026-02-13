@@ -1,0 +1,137 @@
+# Nightwatch Default Configuration
+# Copy this file to /etc/nightwatch/config.yaml and customize
+
+system:
+  name: "nightwatch"
+  log_level: "INFO"
+  data_dir: "/var/lib/nightwatch"
+
+event_system:
+  event_endpoint: "ipc:///tmp/nightwatch-events"
+  alert_endpoint: "ipc:///tmp/nightwatch-alerts"
+  buffer_capacity: 5000
+
+detectors:
+  radar:
+    enabled: true
+    device: "/dev/ttyAMA0"
+    baud_rate: 256000
+    model: "ld2450"
+    sensitivity: 0.8
+    update_rate_hz: 10
+    detection_distance_min: 0.3
+    detection_distance_max: 3.0
+
+  audio:
+    enabled: true
+    device: "default"
+    sample_rate: 16000
+    chunk_size: 1024
+    silence_threshold_db: -50
+
+  bcg:
+    enabled: false  # Enable when BCG sensor is installed
+    sensor_type: "piezo"
+    sample_rate: 100
+
+alert_engine:
+  detector_timeout_seconds: 10
+  health_check_interval: 5
+  alert_cooldown_seconds: 30
+  max_pause_minutes: 60
+
+  rules:
+    # Respiration stopped
+    - name: "Respiration critical"
+      conditions:
+        - detector: radar
+          field: value.respiration_rate
+          operator: "<"
+          value: 4
+          duration_seconds: 10
+      severity: critical
+      message: "Respiration rate critically low ({respiration_rate} BPM)"
+      cooldown_seconds: 60
+
+    # Respiration low
+    - name: "Respiration low"
+      conditions:
+        - detector: radar
+          field: value.respiration_rate
+          operator: "<"
+          value: 8
+          duration_seconds: 15
+      severity: warning
+      message: "Respiration rate low ({respiration_rate} BPM)"
+      cooldown_seconds: 30
+
+    # No presence detected
+    - name: "Subject not detected"
+      conditions:
+        - detector: radar
+          field: value.presence
+          operator: "=="
+          value: false
+          duration_seconds: 30
+      severity: warning
+      message: "Subject not detected by radar"
+      cooldown_seconds: 60
+
+fusion:
+  signal_max_age_seconds: 5.0
+  cross_validation_enabled: true
+  agreement_bonus: 0.1
+  disagreement_penalty: 0.2
+
+  rules:
+    - signal: respiration_rate
+      sources:
+        - detector: radar
+          field: value.respiration_rate
+          weight: 1.0
+        - detector: audio
+          field: value.breathing_rate
+          weight: 0.8
+      strategy: weighted_average
+      min_sources: 1
+
+    - signal: heart_rate
+      sources:
+        - detector: bcg
+          field: value.heart_rate
+          weight: 1.0
+        - detector: radar
+          field: value.heart_rate_estimate
+          weight: 0.5
+      strategy: weighted_average
+      min_sources: 1
+
+notifiers:
+  audio:
+    enabled: true
+    output_type: "speaker"
+    initial_volume: 60
+    max_volume: 100
+    escalation_enabled: true
+    escalation_interval_seconds: 15
+    max_duration_seconds: 120
+    sounds_dir: "/usr/share/nightwatch/sounds"
+
+  push:
+    enabled: false  # Configure with your Pushover/Ntfy credentials
+    provider: "pushover"
+    # pushover_user_key: "${NIGHTWATCH_PUSHOVER_USER}"
+    # pushover_api_token: "${NIGHTWATCH_PUSHOVER_TOKEN}"
+    # ntfy_server: "https://ntfy.sh"
+    # ntfy_topic: "${NIGHTWATCH_NTFY_TOPIC}"
+
+  webhook:
+    enabled: false
+    url: ""
+
+dashboard:
+  host: "0.0.0.0"
+  port: 5000
+  debug: false
+  websocket_update_interval_ms: 1000
+  history_retention_days: 30

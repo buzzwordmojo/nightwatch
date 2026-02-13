@@ -1,0 +1,5 @@
+#!/bin/bash
+# Start Nightwatch with mock sensors (no hardware required)
+# Great for testing the dashboard and alert logic
+
+MOCK=true "$(dirname "$0")/dev"

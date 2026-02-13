@@ -1,0 +1,70 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Type checking
+.mypy_cache/
+
+# Logs
+*.log
+logs/
+
+# Local config
+config/local.yaml
+.env
+
+# Recordings/data
+recordings/
+data/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node (dashboard-ui has its own .gitignore)
+node_modules/
+
+# Convex
+.convex/
+
+# 3D print exports (keep source .scad files)
+hardware/3d_prints/*.stl

@@ -1,0 +1,16 @@
+version: "3.8"
+
+services:
+  # Local Convex backend
+  convex:
+    image: convex/convex-local:latest
+    container_name: nightwatch-convex
+    ports:
+      - "3210:3210"  # Convex API
+      - "3211:3211"  # Convex Dashboard
+    volumes:
+      - convex-data:/convex/data
+    restart: unless-stopped
+
+volumes:
+  convex-data:
