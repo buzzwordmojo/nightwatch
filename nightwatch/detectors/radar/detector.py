@@ -347,6 +347,44 @@ class MockRadarDetector(RadarDetector):
 
             await asyncio.sleep(interval)
 
+    async def _emit_current_state(self) -> None:
+        """Emit mock event with configured values directly (no signal processing)."""
+        import random
+
+        # Check for active anomaly
+        respiration_rate = self._base_respiration_rate
+        if self._anomaly_type == "apnea" and self._anomaly_start:
+            elapsed = time.time() - self._anomaly_start
+            if elapsed < self._anomaly_duration:
+                respiration_rate = 0.0
+
+        # Add small noise for realism
+        if respiration_rate > 0:
+            respiration_rate += random.gauss(0, 0.5)
+            respiration_rate = max(0, respiration_rate)
+
+        # Determine state based on rate
+        state = EventState.NORMAL
+        confidence = 0.9
+
+        if respiration_rate < 6:
+            state = EventState.ALERT
+        elif respiration_rate < 8:
+            state = EventState.WARNING
+
+        value = {
+            "respiration_rate": round(respiration_rate, 1),
+            "respiration_amplitude": 0.8,
+            "heart_rate_estimate": None,
+            "movement": round(random.random() * 0.2, 2),
+            "movement_is_macro": False,
+            "presence": True,
+            "target_distance": round(self._base_distance, 2),
+            "target_angle": 0.0,
+        }
+
+        await self._emit_event(state, confidence, value)
+
     def inject_anomaly(self, anomaly_type: str, duration: float) -> None:
         """
         Inject an anomaly into the mock data.
