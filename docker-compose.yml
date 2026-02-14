@@ -5,6 +5,12 @@ version: "3.8"
 # Start everything:  docker compose up
 # Just backend:      docker compose up backend
 # With simulation:   docker compose --profile simulation up
+# Test alerts:       docker compose --profile test-alerts up
+#
+# Services:
+#   - backend:   Python API + mock sensors (port 8000)
+#   - dashboard: Next.js UI (port 3000)
+#   - convex:    Self-hosted Convex DB (port 3210, dashboard 6791)
 #
 # Works on x86_64 (dev) and ARM64 (Raspberry Pi)
 
@@ -39,21 +45,22 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+      convex:
+        condition: service_started
     restart: unless-stopped
 
   # Local Convex backend (real-time database)
-  # Note: Convex local is optional - dashboard works without it via polling
   convex:
-    image: convex/convex-local:latest
+    image: ghcr.io/get-convex/convex-backend:latest
     container_name: nightwatch-convex
     ports:
       - "3210:3210"  # Convex API
-      - "3211:3211"  # Convex Dashboard
+      - "3211:3211"  # HTTP Actions
     volumes:
       - convex-data:/convex/data
+    environment:
+      - CONVEX_SITE_URL=http://localhost:3211
     restart: unless-stopped
-    profiles:
-      - convex  # Optional - run with: docker compose --profile convex up
 
   # Radar simulator - generates fake sensor data
   radar-sim:

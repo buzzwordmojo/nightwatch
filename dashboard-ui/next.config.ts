@@ -1,6 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Enable standalone output for Docker
+  output: "standalone",
+
   // API proxy to Python backend during development
   async rewrites() {
     return [
