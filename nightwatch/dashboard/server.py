@@ -70,9 +70,13 @@ class DashboardServer:
         self,
         config: DashboardConfig | None = None,
         engine: AlertEngine | None = None,
+        detectors: dict[str, Any] | None = None,
+        mock_mode: bool = False,
     ):
         self._config = config or DashboardConfig()
         self._engine = engine
+        self._detectors = detectors or {}
+        self._mock_mode = mock_mode
         self._app = FastAPI(
             title="Nightwatch Dashboard",
             description="Epilepsy monitoring system dashboard",
@@ -82,6 +86,17 @@ class DashboardServer:
         self._event_buffer = EventBuffer(capacity=1000)
         self._running = False
         self._update_task: asyncio.Task | None = None
+
+        # Simulator state
+        self._sim_state: dict[str, Any] = {
+            "active_scenario": None,
+            "scenario_end_time": None,
+            "breathing_rate": 14.0,
+            "heart_rate": 70.0,
+            "movement": 0.1,
+            "presence": True,
+        }
+        self._scenario_task: asyncio.Task | None = None
 
         # Current state cache
         self._current_state: dict[str, Any] = {
@@ -131,6 +146,16 @@ class DashboardServer:
         self._app.post("/api/test-alert")(self._test_alert)
         self._app.get("/api/config")(self._get_config)
         self._app.websocket("/ws")(self._websocket_endpoint)
+
+        # Simulator routes (only in mock mode)
+        self._app.get("/sim", response_class=HTMLResponse)(self._get_sim_page)
+        self._app.get("/api/sim/status")(self._get_sim_status)
+        self._app.post("/api/sim/scenario")(self._run_scenario)
+        self._app.post("/api/sim/breathing")(self._set_breathing)
+        self._app.post("/api/sim/heartrate")(self._set_heartrate)
+        self._app.post("/api/sim/movement")(self._set_movement)
+        self._app.post("/api/sim/presence")(self._set_presence)
+        self._app.post("/api/sim/reset")(self._reset_sim)
 
     # ========================================================================
     # Health Check
@@ -629,6 +654,595 @@ class DashboardServer:
                 "websocket_update_interval_ms": self._config.websocket_update_interval_ms,
             }
         }
+
+    # ========================================================================
+    # Simulator
+    # ========================================================================
+
+    def _check_mock_mode(self) -> None:
+        """Raise 404 if not in mock mode."""
+        if not self._mock_mode:
+            raise HTTPException(
+                status_code=404,
+                detail="Simulator only available in mock mode (--mock-sensors)"
+            )
+
+    async def _get_sim_page(self, request: Request) -> HTMLResponse:
+        """Serve the simulator control page."""
+        self._check_mock_mode()
+        return HTMLResponse(content=self._get_sim_html())
+
+    async def _get_sim_status(self) -> dict[str, Any]:
+        """Get current simulator state."""
+        self._check_mock_mode()
+        return {
+            "mock_mode": self._mock_mode,
+            "detectors": list(self._detectors.keys()),
+            **self._sim_state,
+        }
+
+    async def _run_scenario(self, request: Request) -> dict[str, Any]:
+        """Run a predefined scenario."""
+        self._check_mock_mode()
+        body = await request.json()
+        scenario = body.get("scenario", "normal")
+        duration = body.get("duration")
+
+        # Cancel any existing scenario
+        if self._scenario_task and not self._scenario_task.done():
+            self._scenario_task.cancel()
+
+        scenarios = {
+            "normal": {"breathing": 14, "heart_rate": 70, "movement": 0.1, "presence": True, "duration": 0},
+            "apnea": {"breathing": 0, "heart_rate": 70, "movement": 0, "presence": True, "duration": duration or 10},
+            "bradycardia": {"breathing": 14, "heart_rate": 40, "movement": 0.1, "presence": True, "duration": duration or 30},
+            "tachycardia": {"breathing": 14, "heart_rate": 140, "movement": 0.3, "presence": True, "duration": duration or 30},
+            "seizure": {"breathing": 20, "heart_rate": 150, "movement": 0.95, "presence": True, "duration": duration or 15},
+            "empty_bed": {"breathing": 0, "heart_rate": 0, "movement": 0, "presence": False, "duration": 0},
+        }
+
+        if scenario not in scenarios:
+            raise HTTPException(status_code=400, detail=f"Unknown scenario: {scenario}")
+
+        params = scenarios[scenario]
+        self._apply_sim_values(
+            breathing=params["breathing"],
+            heart_rate=params["heart_rate"],
+            movement=params["movement"],
+            presence=params["presence"],
+        )
+
+        self._sim_state["active_scenario"] = scenario
+        scenario_duration = params["duration"]
+
+        if scenario_duration > 0:
+            self._sim_state["scenario_end_time"] = time.time() + scenario_duration
+            self._scenario_task = asyncio.create_task(
+                self._scenario_auto_reset(scenario_duration)
+            )
+        else:
+            self._sim_state["scenario_end_time"] = None
+
+        return {
+            "status": "scenario_started",
+            "scenario": scenario,
+            "duration": scenario_duration,
+            "auto_reset": scenario_duration > 0,
+        }
+
+    async def _scenario_auto_reset(self, duration: float) -> None:
+        """Auto-reset to normal after scenario duration."""
+        await asyncio.sleep(duration)
+        self._apply_sim_values(breathing=14, heart_rate=70, movement=0.1, presence=True)
+        self._sim_state["active_scenario"] = None
+        self._sim_state["scenario_end_time"] = None
+
+    def _apply_sim_values(
+        self,
+        breathing: float | None = None,
+        heart_rate: float | None = None,
+        movement: float | None = None,
+        presence: bool | None = None,
+    ) -> None:
+        """Apply simulation values to mock detectors."""
+        if breathing is not None:
+            self._sim_state["breathing_rate"] = breathing
+            if "radar" in self._detectors:
+                radar = self._detectors["radar"]
+                if hasattr(radar, "_breathing_rate"):
+                    radar._breathing_rate = breathing
+                if breathing == 0 and hasattr(radar, "inject_anomaly"):
+                    radar.inject_anomaly("apnea", duration=9999)
+                elif breathing > 0 and hasattr(radar, "_anomaly_active"):
+                    radar._anomaly_active = False
+
+        if heart_rate is not None:
+            self._sim_state["heart_rate"] = heart_rate
+            if "bcg" in self._detectors:
+                bcg = self._detectors["bcg"]
+                if hasattr(bcg, "_heart_rate"):
+                    bcg._heart_rate = heart_rate
+
+        if movement is not None:
+            self._sim_state["movement"] = movement
+            if "bcg" in self._detectors:
+                bcg = self._detectors["bcg"]
+                if hasattr(bcg, "set_movement"):
+                    bcg.set_movement(movement > 0.5)
+
+        if presence is not None:
+            self._sim_state["presence"] = presence
+            if "bcg" in self._detectors:
+                bcg = self._detectors["bcg"]
+                if hasattr(bcg, "set_bed_occupied"):
+                    bcg.set_bed_occupied(presence)
+            if "radar" in self._detectors:
+                radar = self._detectors["radar"]
+                if hasattr(radar, "_presence"):
+                    radar._presence = presence
+
+    async def _set_breathing(self, request: Request) -> dict[str, Any]:
+        """Set breathing rate."""
+        self._check_mock_mode()
+        body = await request.json()
+        rate = float(body.get("rate", 14))
+        rate = max(0, min(40, rate))
+        self._apply_sim_values(breathing=rate)
+        self._sim_state["active_scenario"] = None
+        return {"status": "ok", "breathing_rate": rate}
+
+    async def _set_heartrate(self, request: Request) -> dict[str, Any]:
+        """Set heart rate."""
+        self._check_mock_mode()
+        body = await request.json()
+        rate = float(body.get("rate", 70))
+        rate = max(0, min(200, rate))
+        self._apply_sim_values(heart_rate=rate)
+        self._sim_state["active_scenario"] = None
+        return {"status": "ok", "heart_rate": rate}
+
+    async def _set_movement(self, request: Request) -> dict[str, Any]:
+        """Set movement level."""
+        self._check_mock_mode()
+        body = await request.json()
+        level = float(body.get("level", 0.1))
+        level = max(0, min(1, level))
+        self._apply_sim_values(movement=level)
+        self._sim_state["active_scenario"] = None
+        return {"status": "ok", "movement": level}
+
+    async def _set_presence(self, request: Request) -> dict[str, Any]:
+        """Set bed presence."""
+        self._check_mock_mode()
+        body = await request.json()
+        present = bool(body.get("present", True))
+        self._apply_sim_values(presence=present)
+        self._sim_state["active_scenario"] = None
+        return {"status": "ok", "presence": present}
+
+    async def _reset_sim(self) -> dict[str, Any]:
+        """Reset simulator to normal values."""
+        self._check_mock_mode()
+        if self._scenario_task and not self._scenario_task.done():
+            self._scenario_task.cancel()
+        self._apply_sim_values(breathing=14, heart_rate=70, movement=0.1, presence=True)
+        self._sim_state["active_scenario"] = None
+        self._sim_state["scenario_end_time"] = None
+        return {"status": "reset"}
+
+    def _get_sim_html(self) -> str:
+        """Generate inline HTML for simulator page."""
+        return """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nightwatch Simulator</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container { max-width: 600px; margin: 0 auto; }
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px 0;
+            border-bottom: 1px solid #333;
+            margin-bottom: 30px;
+        }
+        h1 { font-size: 24px; font-weight: 600; }
+        .mock-badge {
+            background: #8b5cf6;
+            color: white;
+            padding: 6px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .section {
+            background: #16213e;
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 20px;
+        }
+        .section-title {
+            font-size: 14px;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 20px;
+        }
+        .slider-group {
+            margin-bottom: 24px;
+        }
+        .slider-group:last-child { margin-bottom: 0; }
+        .slider-label {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+        .slider-name { font-weight: 500; }
+        .slider-value {
+            font-weight: 700;
+            color: #3b82f6;
+            min-width: 80px;
+            text-align: right;
+        }
+        input[type="range"] {
+            width: 100%;
+            height: 8px;
+            border-radius: 4px;
+            background: #333;
+            outline: none;
+            -webkit-appearance: none;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: #3b82f6;
+            cursor: pointer;
+        }
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .checkbox-group input {
+            width: 20px;
+            height: 20px;
+            accent-color: #3b82f6;
+        }
+        .scenarios {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+        }
+        .scenario-btn {
+            padding: 16px 12px;
+            border: none;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-align: center;
+        }
+        .scenario-btn.normal { background: #10b981; color: white; }
+        .scenario-btn.normal:hover { background: #059669; }
+        .scenario-btn.warning { background: #f59e0b; color: white; }
+        .scenario-btn.warning:hover { background: #d97706; }
+        .scenario-btn.danger { background: #ef4444; color: white; }
+        .scenario-btn.danger:hover { background: #dc2626; }
+        .scenario-btn.neutral { background: #6b7280; color: white; }
+        .scenario-btn.neutral:hover { background: #4b5563; }
+        .scenario-btn.active {
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.5);
+        }
+        .scenario-duration {
+            font-size: 11px;
+            opacity: 0.8;
+            margin-top: 4px;
+        }
+        .reset-btn {
+            width: 100%;
+            padding: 16px;
+            border: 2px solid #3b82f6;
+            border-radius: 8px;
+            background: transparent;
+            color: #3b82f6;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-top: 20px;
+        }
+        .reset-btn:hover {
+            background: #3b82f6;
+            color: white;
+        }
+        .status-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px 20px;
+            background: #16213e;
+            border-radius: 12px;
+            margin-top: 20px;
+        }
+        .status-label { color: #888; }
+        .status-value { font-weight: 600; }
+        .status-value.active { color: #f59e0b; }
+        .status-value.normal { color: #10b981; }
+        .countdown { color: #f59e0b; font-weight: 600; }
+        .dashboard-link {
+            display: block;
+            text-align: center;
+            color: #3b82f6;
+            text-decoration: none;
+            margin-top: 20px;
+            font-weight: 500;
+        }
+        .dashboard-link:hover { text-decoration: underline; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Nightwatch Simulator</h1>
+            <span class="mock-badge">Mock Mode</span>
+        </header>
+
+        <div class="section">
+            <div class="section-title">Vital Signs</div>
+
+            <div class="slider-group">
+                <div class="slider-label">
+                    <span class="slider-name">Breathing Rate</span>
+                    <span class="slider-value" id="breathing-value">14 BPM</span>
+                </div>
+                <input type="range" id="breathing-slider" min="0" max="40" value="14" step="1">
+            </div>
+
+            <div class="slider-group">
+                <div class="slider-label">
+                    <span class="slider-name">Heart Rate</span>
+                    <span class="slider-value" id="heartrate-value">70 BPM</span>
+                </div>
+                <input type="range" id="heartrate-slider" min="0" max="200" value="70" step="1">
+            </div>
+
+            <div class="slider-group">
+                <div class="slider-label">
+                    <span class="slider-name">Movement</span>
+                    <span class="slider-value" id="movement-value">Low</span>
+                </div>
+                <input type="range" id="movement-slider" min="0" max="100" value="10" step="1">
+            </div>
+
+            <div class="checkbox-group">
+                <input type="checkbox" id="presence-checkbox" checked>
+                <label for="presence-checkbox">Person in bed</label>
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="section-title">Quick Scenarios</div>
+            <div class="scenarios">
+                <button class="scenario-btn warning" onclick="runScenario('apnea')">
+                    Apnea
+                    <div class="scenario-duration">10 sec</div>
+                </button>
+                <button class="scenario-btn danger" onclick="runScenario('bradycardia')">
+                    Bradycardia
+                    <div class="scenario-duration">30 sec</div>
+                </button>
+                <button class="scenario-btn danger" onclick="runScenario('tachycardia')">
+                    Tachycardia
+                    <div class="scenario-duration">30 sec</div>
+                </button>
+                <button class="scenario-btn danger" onclick="runScenario('seizure')">
+                    Seizure
+                    <div class="scenario-duration">15 sec</div>
+                </button>
+                <button class="scenario-btn neutral" onclick="runScenario('empty_bed')">
+                    Empty Bed
+                    <div class="scenario-duration">manual</div>
+                </button>
+                <button class="scenario-btn normal" onclick="runScenario('normal')">
+                    Normal
+                    <div class="scenario-duration">baseline</div>
+                </button>
+            </div>
+            <button class="reset-btn" onclick="resetSim()">Reset to Normal</button>
+        </div>
+
+        <div class="status-bar">
+            <div>
+                <span class="status-label">Status: </span>
+                <span class="status-value" id="status-text">Normal</span>
+            </div>
+            <div>
+                <span class="status-label">Scenario: </span>
+                <span class="status-value" id="scenario-text">None</span>
+                <span class="countdown" id="countdown"></span>
+            </div>
+        </div>
+
+        <a href="/" class="dashboard-link" target="_blank">Open Dashboard in New Window</a>
+    </div>
+
+    <script>
+        let countdownInterval = null;
+
+        // Slider handlers
+        document.getElementById('breathing-slider').addEventListener('input', async (e) => {
+            const val = e.target.value;
+            document.getElementById('breathing-value').textContent = val + ' BPM';
+            await fetch('/api/sim/breathing', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ rate: parseFloat(val) })
+            });
+            updateStatus();
+        });
+
+        document.getElementById('heartrate-slider').addEventListener('input', async (e) => {
+            const val = e.target.value;
+            document.getElementById('heartrate-value').textContent = val + ' BPM';
+            await fetch('/api/sim/heartrate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ rate: parseFloat(val) })
+            });
+            updateStatus();
+        });
+
+        document.getElementById('movement-slider').addEventListener('input', async (e) => {
+            const val = e.target.value;
+            const level = val / 100;
+            let text = 'Low';
+            if (level > 0.7) text = 'High';
+            else if (level > 0.3) text = 'Medium';
+            document.getElementById('movement-value').textContent = text;
+            await fetch('/api/sim/movement', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ level: level })
+            });
+            updateStatus();
+        });
+
+        document.getElementById('presence-checkbox').addEventListener('change', async (e) => {
+            await fetch('/api/sim/presence', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ present: e.target.checked })
+            });
+            updateStatus();
+        });
+
+        async function runScenario(scenario) {
+            const resp = await fetch('/api/sim/scenario', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ scenario: scenario })
+            });
+            const data = await resp.json();
+
+            document.getElementById('scenario-text').textContent = scenario;
+            document.getElementById('scenario-text').className = 'status-value active';
+
+            // Update sliders to match scenario
+            await refreshState();
+
+            // Start countdown if auto-reset
+            if (data.auto_reset && data.duration > 0) {
+                startCountdown(data.duration);
+            } else {
+                clearCountdown();
+            }
+        }
+
+        async function resetSim() {
+            await fetch('/api/sim/reset', { method: 'POST' });
+            clearCountdown();
+            await refreshState();
+        }
+
+        async function refreshState() {
+            const resp = await fetch('/api/sim/status');
+            const data = await resp.json();
+
+            document.getElementById('breathing-slider').value = data.breathing_rate;
+            document.getElementById('breathing-value').textContent = data.breathing_rate + ' BPM';
+
+            document.getElementById('heartrate-slider').value = data.heart_rate;
+            document.getElementById('heartrate-value').textContent = data.heart_rate + ' BPM';
+
+            const movement = data.movement * 100;
+            document.getElementById('movement-slider').value = movement;
+            let movementText = 'Low';
+            if (data.movement > 0.7) movementText = 'High';
+            else if (data.movement > 0.3) movementText = 'Medium';
+            document.getElementById('movement-value').textContent = movementText;
+
+            document.getElementById('presence-checkbox').checked = data.presence;
+
+            updateStatus();
+
+            if (data.active_scenario) {
+                document.getElementById('scenario-text').textContent = data.active_scenario;
+                document.getElementById('scenario-text').className = 'status-value active';
+            } else {
+                document.getElementById('scenario-text').textContent = 'None';
+                document.getElementById('scenario-text').className = 'status-value';
+            }
+        }
+
+        function updateStatus() {
+            const breathing = parseFloat(document.getElementById('breathing-slider').value);
+            const heartrate = parseFloat(document.getElementById('heartrate-slider').value);
+            const presence = document.getElementById('presence-checkbox').checked;
+
+            let status = 'Normal';
+            let statusClass = 'normal';
+
+            if (!presence) {
+                status = 'Empty Bed';
+                statusClass = '';
+            } else if (breathing < 6 || heartrate < 40 || heartrate > 150) {
+                status = 'Critical';
+                statusClass = 'active';
+            } else if (breathing < 10 || heartrate < 50 || heartrate > 120) {
+                status = 'Warning';
+                statusClass = 'active';
+            }
+
+            document.getElementById('status-text').textContent = status;
+            document.getElementById('status-text').className = 'status-value ' + statusClass;
+        }
+
+        function startCountdown(seconds) {
+            clearCountdown();
+            let remaining = seconds;
+            const el = document.getElementById('countdown');
+            el.textContent = ' (' + remaining + 's)';
+
+            countdownInterval = setInterval(() => {
+                remaining--;
+                if (remaining <= 0) {
+                    clearCountdown();
+                    refreshState();
+                } else {
+                    el.textContent = ' (' + remaining + 's)';
+                }
+            }, 1000);
+        }
+
+        function clearCountdown() {
+            if (countdownInterval) {
+                clearInterval(countdownInterval);
+                countdownInterval = null;
+            }
+            document.getElementById('countdown').textContent = '';
+        }
+
+        // Initial state
+        refreshState();
+    </script>
+</body>
+</html>
+"""
 
     # ========================================================================
     # WebSocket

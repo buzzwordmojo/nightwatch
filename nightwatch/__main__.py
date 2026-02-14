@@ -98,10 +98,19 @@ async def run_nightwatch(
     # Create dashboard server
     dashboard = None
     if enable_dashboard:
+        # Build detector dict for simulator control
+        detector_dict = {}
+        for d in detectors:
+            detector_dict[d.name] = d
+
         dashboard = DashboardServer(
             config=config.dashboard,
+            detectors=detector_dict,
+            mock_mode=mock_sensors,
         )
         print(f"📊 Dashboard enabled at http://{config.dashboard.host}:{config.dashboard.port}")
+        if mock_sensors:
+            print(f"🎛️  Simulator available at http://{config.dashboard.host}:{config.dashboard.port}/sim")
 
     # Create Convex bridge (optional)
     convex_bridge = None
