@@ -1,0 +1,156 @@
+# Nightwatch VM Testing Configuration
+#
+# Use this config when testing in the Pi VM or on a development machine
+# without real hardware. Uses virtual serial ports and mock sensors.
+#
+# Usage:
+#   python -m nightwatch --config config/vm-test.yaml
+#
+
+system:
+  name: "nightwatch-vm-test"
+  log_level: "DEBUG"
+  data_dir: "/tmp/nightwatch-test"
+
+event_system:
+  event_endpoint: "ipc:///tmp/nightwatch-events"
+  alert_endpoint: "ipc:///tmp/nightwatch-alerts"
+  buffer_capacity: 1000
+
+detectors:
+  radar:
+    enabled: true
+    device: "/tmp/ttyVRADAR"  # Virtual serial port from socat
+    baud_rate: 256000
+    model: "ld2450"
+    sensitivity: 0.8
+    update_rate_hz: 10
+    detection_distance_min: 0.3
+    detection_distance_max: 3.0
+    # Fall back to mock if virtual port not available
+    mock_fallback: true
+
+  audio:
+    enabled: true
+    device: "default"
+    sample_rate: 16000
+    chunk_size: 1024
+    silence_threshold_db: -50
+    # Use mock audio in VM
+    mock_fallback: true
+
+  bcg:
+    enabled: true
+    # Always mock BCG - no SPI in VM
+    mock: true
+    mock_heart_rate: 68
+    mock_variance: 5
+    sensor_type: "piezo"
+    sample_rate: 100
+
+alert_engine:
+  # Shorter timeouts for faster testing
+  detector_timeout_seconds: 5
+  health_check_interval: 2
+  alert_cooldown_seconds: 10
+  max_pause_minutes: 60
+
+  rules:
+    # Respiration stopped - shorter duration for testing
+    - name: "Respiration critical"
+      conditions:
+        - detector: radar
+          field: value.respiration_rate
+          operator: "<"
+          value: 4
+          duration_seconds: 5  # Shorter for testing
+      severity: critical
+      message: "TEST: Respiration rate critically low ({respiration_rate} BPM)"
+      cooldown_seconds: 15
+
+    # Respiration low
+    - name: "Respiration low"
+      conditions:
+        - detector: radar
+          field: value.respiration_rate
+          operator: "<"
+          value: 8
+          duration_seconds: 8
+      severity: warning
+      message: "TEST: Respiration rate low ({respiration_rate} BPM)"
+      cooldown_seconds: 15
+
+    # No presence detected
+    - name: "Subject not detected"
+      conditions:
+        - detector: radar
+          field: value.presence
+          operator: "=="
+          value: false
+          duration_seconds: 10
+      severity: warning
+      message: "TEST: Subject not detected by radar"
+      cooldown_seconds: 30
+
+fusion:
+  signal_max_age_seconds: 5.0
+  cross_validation_enabled: true
+  agreement_bonus: 0.1
+  disagreement_penalty: 0.2
+
+  rules:
+    - signal: respiration_rate
+      sources:
+        - detector: radar
+          field: value.respiration_rate
+          weight: 1.0
+        - detector: audio
+          field: value.breathing_rate
+          weight: 0.8
+      strategy: weighted_average
+      min_sources: 1
+
+    - signal: heart_rate
+      sources:
+        - detector: bcg
+          field: value.heart_rate
+          weight: 1.0
+        - detector: radar
+          field: value.heart_rate_estimate
+          weight: 0.5
+      strategy: weighted_average
+      min_sources: 1
+
+notifiers:
+  audio:
+    enabled: true
+    output_type: "speaker"
+    initial_volume: 30  # Lower for testing
+    max_volume: 60
+    escalation_enabled: false  # Disable for testing
+    sounds_dir: "/usr/share/sounds/alsa"  # Use system sounds
+
+  push:
+    enabled: false
+
+  webhook:
+    enabled: false
+
+dashboard:
+  host: "0.0.0.0"
+  port: 8000
+  debug: true
+  websocket_update_interval_ms: 500  # Faster updates for testing
+  history_retention_days: 1
+
+# Setup-specific configuration
+setup:
+  config_dir: "/tmp/nightwatch-config"  # Use temp dir for testing
+  hotspot:
+    ssid_prefix: "Nightwatch-Test"
+    interface: "wlan0"
+    gateway_ip: "192.168.4.1"
+  portal:
+    host: "0.0.0.0"
+    port: 80
+    dashboard_url: "http://localhost:3000/setup"

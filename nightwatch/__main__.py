@@ -99,8 +99,7 @@ async def run_nightwatch(
     dashboard = None
     if enable_dashboard:
         dashboard = DashboardServer(
-            host=config.dashboard.host,
-            port=config.dashboard.port,
+            config=config.dashboard,
         )
         print(f"📊 Dashboard enabled at http://{config.dashboard.host}:{config.dashboard.port}")
 

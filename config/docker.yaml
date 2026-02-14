@@ -1,0 +1,76 @@
+# Nightwatch Docker Configuration
+# Used when running in Docker containers
+
+system:
+  name: "nightwatch-docker"
+  log_level: "INFO"
+  data_dir: "/var/lib/nightwatch"
+
+event_system:
+  event_endpoint: "ipc:///tmp/nightwatch-events"
+  alert_endpoint: "ipc:///tmp/nightwatch-alerts"
+  buffer_capacity: 5000
+
+detectors:
+  radar:
+    enabled: true
+    mock: true  # Always mock in Docker
+    mock_respiration_rate: 14
+    mock_variance: 2
+
+  audio:
+    enabled: true
+    mock: true
+
+  bcg:
+    enabled: true
+    mock: true
+    mock_heart_rate: 68
+    mock_variance: 5
+
+alert_engine:
+  detector_timeout_seconds: 10
+  health_check_interval: 5
+  alert_cooldown_seconds: 30
+  max_pause_minutes: 60
+
+  rules:
+    - name: "Respiration critical"
+      conditions:
+        - detector: radar
+          field: value.respiration_rate
+          operator: "<"
+          value: 4
+          duration_seconds: 10
+      severity: critical
+      message: "Respiration rate critically low"
+      cooldown_seconds: 60
+
+    - name: "Respiration low"
+      conditions:
+        - detector: radar
+          field: value.respiration_rate
+          operator: "<"
+          value: 8
+          duration_seconds: 15
+      severity: warning
+      message: "Respiration rate low"
+      cooldown_seconds: 30
+
+notifiers:
+  audio:
+    enabled: false  # No audio in Docker
+  push:
+    enabled: false
+  webhook:
+    enabled: false
+
+dashboard:
+  host: "0.0.0.0"
+  port: 8000
+  debug: false
+  websocket_update_interval_ms: 1000
+
+convex:
+  enabled: true
+  url: "http://convex:3210"

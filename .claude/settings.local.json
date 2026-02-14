@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:www.raspberrypi.com)",
+      "WebFetch(domain:www.adafruit.com)",
+      "WebFetch(domain:www.amazon.com)",
+      "WebFetch(domain:www.sparkfun.com)",
+      "WebSearch",
+      "WebFetch(domain:www.digikey.com)",
+      "Bash(chmod:*)",
+      "Bash(docker compose:*)",
+      "Bash(docker stop:*)",
+      "Bash(docker rm:*)",
+      "Bash(docker run:*)",
+      "Bash(docker logs:*)",
+      "Bash(curl:*)",
+      "Bash(docker exec:*)",
+      "Bash(git add:*)"
+    ]
+  }
+}

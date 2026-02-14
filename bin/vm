@@ -1,0 +1,58 @@
+#!/bin/bash
+#
+# Nightwatch VM management helper
+#
+# Usage:
+#   ./bin/vm start [--fast]     Start the Pi VM
+#   ./bin/vm ssh                SSH into running VM
+#   ./bin/vm test               Run integration tests in VM
+#   ./bin/vm simulate <scenario> Run a simulation scenario
+#
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+VM_DIR="${PROJECT_ROOT}/.pi-vm"
+
+case "${1:-help}" in
+    start)
+        if [ "${2:-}" == "--fast" ]; then
+            exec "${VM_DIR}/start-pi-fast.sh"
+        else
+            exec "${VM_DIR}/start-pi.sh"
+        fi
+        ;;
+    ssh)
+        exec ssh -p 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null pi@localhost
+        ;;
+    test)
+        echo "Running integration tests in VM..."
+        ssh -p 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null pi@localhost \
+            "cd ~/nightwatch && source .venv/bin/activate && pytest tests/integration/ -v"
+        ;;
+    simulate)
+        scenario="${2:-normal}"
+        echo "Running simulation: $scenario"
+        python3 "${PROJECT_ROOT}/scripts/vm/radar-simulator.py" --scenario "$scenario"
+        ;;
+    help|--help|-h|*)
+        echo "Nightwatch VM Management"
+        echo ""
+        echo "Usage: ./bin/vm <command> [options]"
+        echo ""
+        echo "Commands:"
+        echo "  start [--fast]        Start the Pi VM (use --fast for quicker boot)"
+        echo "  ssh                   SSH into running VM"
+        echo "  test                  Run integration tests in VM"
+        echo "  simulate <scenario>   Run simulation (normal, apnea, seizure, empty)"
+        echo ""
+        echo "Port Forwarding:"
+        echo "  localhost:2222  -> VM SSH"
+        echo "  localhost:3000  -> Dashboard UI"
+        echo "  localhost:8000  -> API"
+        echo "  localhost:8080  -> Captive Portal"
+        echo ""
+        echo "Default credentials: pi / raspberry"
+        ;;
+esac

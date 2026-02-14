@@ -23,7 +23,7 @@ Nightwatch monitors a sleeping child for signs of seizure activity using multipl
 
 ## Quick Start
 
-### Hardware (~$130 for basic setup)
+### Hardware (~$123 for basic setup)
 
 See [SHOPPING_LIST.md](hardware/SHOPPING_LIST.md) for complete parts list.
 

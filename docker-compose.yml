@@ -1,7 +1,48 @@
 version: "3.8"
 
+# Nightwatch Local Development
+#
+# Start everything:  docker compose up
+# Just backend:      docker compose up backend
+# With simulation:   docker compose --profile simulation up
+#
+# Works on x86_64 (dev) and ARM64 (Raspberry Pi)
+
 services:
-  # Local Convex backend
+  # Python backend with mock sensors
+  backend:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./nightwatch:/app/nightwatch:ro
+      - ./config:/app/config:ro
+      - nightwatch-data:/var/lib/nightwatch
+    environment:
+      - NIGHTWATCH_CONFIG=/app/config/docker.yaml
+      - NIGHTWATCH_MOCK_SENSORS=true
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  # Next.js dashboard
+  dashboard:
+    build: ./dashboard-ui
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://backend:8000
+      - NEXT_PUBLIC_CONVEX_URL=http://convex:3210
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Local Convex backend (real-time database)
+  # Note: Convex local is optional - dashboard works without it via polling
   convex:
     image: convex/convex-local:latest
     container_name: nightwatch-convex
@@ -11,6 +52,34 @@ services:
     volumes:
       - convex-data:/convex/data
     restart: unless-stopped
+    profiles:
+      - convex  # Optional - run with: docker compose --profile convex up
+
+  # Radar simulator - generates fake sensor data
+  radar-sim:
+    build: .
+    volumes:
+      - ./scripts:/app/scripts:ro
+    command: >
+      python /app/scripts/vm/radar-simulator.py
+      --stdout
+      --scenario normal
+      --rate 10
+    profiles:
+      - simulation
+
+  # Apnea scenario - for testing alerts
+  apnea-sim:
+    build: .
+    volumes:
+      - ./scripts:/app/scripts:ro
+    command: >
+      python /app/scripts/vm/radar-simulator.py
+      --stdout
+      --scenario apnea
+    profiles:
+      - test-alerts
 
 volumes:
+  nightwatch-data:
   convex-data:

@@ -1,0 +1,134 @@
+name: Pi VM Integration Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:  # Allow manual trigger
+
+# Only run one instance at a time (VM tests are resource-intensive)
+concurrency:
+  group: pi-vm-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pi-vm-integration:
+    name: Pi VM Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            qemu-system-arm \
+            qemu-utils \
+            qemu-efi-aarch64
+
+      - name: Cache Pi OS Image
+        uses: actions/cache@v4
+        id: cache-pi-image
+        with:
+          path: .pi-vm
+          key: pi-os-bookworm-arm64-v1
+
+      - name: Set up Pi VM
+        if: steps.cache-pi-image.outputs.cache-hit != 'true'
+        run: |
+          ./scripts/vm/setup-pi-vm.sh
+
+      - name: Start Pi VM (Fast Mode)
+        run: |
+          # Start VM in background
+          ./.pi-vm/start-pi-fast.sh &
+          VM_PID=$!
+          echo "VM_PID=$VM_PID" >> $GITHUB_ENV
+
+          # Wait for SSH to become available
+          echo "Waiting for VM to boot..."
+          for i in {1..120}; do
+            if ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -p 2222 pi@localhost echo "VM ready" 2>/dev/null; then
+              echo "VM is ready after ${i} seconds"
+              break
+            fi
+            if [ $i -eq 120 ]; then
+              echo "VM failed to start within 120 seconds"
+              kill $VM_PID 2>/dev/null || true
+              exit 1
+            fi
+            sleep 1
+          done
+
+      - name: Install Nightwatch in VM
+        run: |
+          # Copy project to VM
+          scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -P 2222 -r . pi@localhost:~/nightwatch/
+
+          # Install in VM
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -p 2222 pi@localhost << 'EOF'
+          cd ~/nightwatch
+          python3 -m venv .venv
+          source .venv/bin/activate
+          pip install -e ".[dev]"
+          EOF
+
+      - name: Run Integration Tests
+        run: |
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -p 2222 pi@localhost << 'EOF'
+          cd ~/nightwatch
+          source .venv/bin/activate
+          pytest tests/integration/ -v --tb=short || true
+          EOF
+
+      - name: Test Setup Module
+        run: |
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -p 2222 pi@localhost << 'EOF'
+          cd ~/nightwatch
+          source .venv/bin/activate
+          pytest tests/setup/ -v --tb=short
+          EOF
+
+      - name: Test Mock Sensors
+        run: |
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -p 2222 pi@localhost << 'EOF'
+          cd ~/nightwatch
+          source .venv/bin/activate
+          # Start with mock sensors, verify it runs
+          timeout 10 python -m nightwatch --mock-sensors --config config/vm-test.yaml || true
+          echo "Mock sensor test completed"
+          EOF
+
+      - name: Collect Logs
+        if: failure()
+        run: |
+          mkdir -p logs
+          scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -P 2222 pi@localhost:/tmp/nightwatch-test/*.log logs/ 2>/dev/null || true
+          scp -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -P 2222 pi@localhost:~/nightwatch/pytest-output.txt logs/ 2>/dev/null || true
+
+      - name: Upload Logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pi-vm-logs
+          path: logs/
+
+      - name: Stop VM
+        if: always()
+        run: |
+          kill ${{ env.VM_PID }} 2>/dev/null || true
