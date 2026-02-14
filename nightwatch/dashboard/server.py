@@ -111,12 +111,15 @@ class DashboardServer:
         if static_dir.exists():
             self._app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
-        if templates_dir.exists():
+        # Only use templates if index.html exists
+        index_template = templates_dir / "index.html"
+        if index_template.exists():
             self._templates = Jinja2Templates(directory=templates_dir)
         else:
             self._templates = None
 
         # Routes
+        self._app.get("/health")(self._health_check)
         self._app.get("/", response_class=HTMLResponse)(self._get_index)
         self._app.get("/api/status")(self._get_status)
         self._app.get("/api/alerts")(self._get_alerts)
@@ -128,6 +131,18 @@ class DashboardServer:
         self._app.post("/api/test-alert")(self._test_alert)
         self._app.get("/api/config")(self._get_config)
         self._app.websocket("/ws")(self._websocket_endpoint)
+
+    # ========================================================================
+    # Health Check
+    # ========================================================================
+
+    async def _health_check(self) -> dict[str, Any]:
+        """Health check endpoint for Docker/Kubernetes."""
+        return {
+            "status": "healthy",
+            "running": self._running,
+            "connections": self._ws_manager.connection_count,
+        }
 
     # ========================================================================
     # Page Routes
@@ -725,23 +740,22 @@ class DashboardServer:
     # Server Control
     # ========================================================================
 
-    async def start(self, background: bool = True) -> None:
-        """Start the dashboard server."""
+    async def start(self) -> None:
+        """Start the dashboard server in background."""
         self._running = True
 
         # Start update broadcast task
         self._update_task = asyncio.create_task(self._update_loop())
 
-        if not background:
-            # Run server in foreground
-            config = uvicorn.Config(
-                self._app,
-                host=self._config.host,
-                port=self._config.port,
-                log_level="info",
-            )
-            server = uvicorn.Server(config)
-            await server.serve()
+        # Start uvicorn server in background
+        config = uvicorn.Config(
+            self._app,
+            host=self._config.host,
+            port=self._config.port,
+            log_level="info",
+        )
+        self._server = uvicorn.Server(config)
+        self._server_task = asyncio.create_task(self._server.serve())
 
     async def stop(self) -> None:
         """Stop the dashboard server."""
@@ -753,6 +767,17 @@ class DashboardServer:
                 await self._update_task
             except asyncio.CancelledError:
                 pass
+
+        # Stop uvicorn server
+        if hasattr(self, "_server") and self._server:
+            self._server.should_exit = True
+            if hasattr(self, "_server_task") and self._server_task:
+                try:
+                    await asyncio.wait_for(self._server_task, timeout=5.0)
+                except asyncio.TimeoutError:
+                    self._server_task.cancel()
+                except asyncio.CancelledError:
+                    pass
 
     def run(self) -> None:
         """Run server synchronously (for standalone use)."""
