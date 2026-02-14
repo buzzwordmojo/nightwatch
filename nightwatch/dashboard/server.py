@@ -747,39 +747,48 @@ class DashboardServer:
         """Apply simulation values to mock detectors."""
         if breathing is not None:
             self._sim_state["breathing_rate"] = breathing
+            # MockRadarDetector uses _base_respiration_rate
             if "radar" in self._detectors:
                 radar = self._detectors["radar"]
-                if hasattr(radar, "_breathing_rate"):
-                    radar._breathing_rate = breathing
+                if hasattr(radar, "_base_respiration_rate"):
+                    radar._base_respiration_rate = breathing
+                # Use inject_anomaly for apnea (reduces amplitude)
                 if breathing == 0 and hasattr(radar, "inject_anomaly"):
                     radar.inject_anomaly("apnea", duration=9999)
-                elif breathing > 0 and hasattr(radar, "_anomaly_active"):
-                    radar._anomaly_active = False
+                elif breathing > 0 and hasattr(radar, "_anomaly_type"):
+                    radar._anomaly_type = None
+            # MockBCGDetector also has respiration
+            if "bcg" in self._detectors:
+                bcg = self._detectors["bcg"]
+                if hasattr(bcg, "_base_respiration_rate"):
+                    bcg._base_respiration_rate = breathing
 
         if heart_rate is not None:
             self._sim_state["heart_rate"] = heart_rate
+            # MockBCGDetector uses _base_heart_rate
             if "bcg" in self._detectors:
                 bcg = self._detectors["bcg"]
-                if hasattr(bcg, "_heart_rate"):
-                    bcg._heart_rate = heart_rate
+                if hasattr(bcg, "_base_heart_rate"):
+                    bcg._base_heart_rate = heart_rate
+                # Reset injection flags when setting direct value
+                if hasattr(bcg, "_inject_bradycardia"):
+                    bcg._inject_bradycardia = False
+                if hasattr(bcg, "_inject_tachycardia"):
+                    bcg._inject_tachycardia = False
 
         if movement is not None:
             self._sim_state["movement"] = movement
             if "bcg" in self._detectors:
                 bcg = self._detectors["bcg"]
-                if hasattr(bcg, "set_movement"):
-                    bcg.set_movement(movement > 0.5)
+                if hasattr(bcg, "_movement"):
+                    bcg._movement = movement > 0.5
 
         if presence is not None:
             self._sim_state["presence"] = presence
             if "bcg" in self._detectors:
                 bcg = self._detectors["bcg"]
-                if hasattr(bcg, "set_bed_occupied"):
-                    bcg.set_bed_occupied(presence)
-            if "radar" in self._detectors:
-                radar = self._detectors["radar"]
-                if hasattr(radar, "_presence"):
-                    radar._presence = presence
+                if hasattr(bcg, "_bed_occupied"):
+                    bcg._bed_occupied = presence
 
     async def _set_breathing(self, request: Request) -> dict[str, Any]:
         """Set breathing rate."""
