@@ -132,7 +132,7 @@ class TestSetupWizardEndpoints:
         with patch.object(portal, "_save_wifi_credentials", new_callable=AsyncMock):
             test_client.post(
                 "/api/setup/wifi",
-                json={"ssid": "CallbackTest", "password": "pass123"},
+                json={"ssid": "CallbackTest", "password": "pass12345"},  # 8+ chars
             )
 
         assert callback_called is True
@@ -154,9 +154,9 @@ class TestWiFiCredentialsModel:
 
     def test_valid_credentials(self):
         """Valid credentials should be accepted."""
-        creds = WiFiCredentials(ssid="TestNet", password="pass123")
+        creds = WiFiCredentials(ssid="TestNet", password="pass12345")
         assert creds.ssid == "TestNet"
-        assert creds.password == "pass123"
+        assert creds.password == "pass12345"
 
     def test_empty_password_allowed(self):
         """Empty password should be allowed (open networks)."""

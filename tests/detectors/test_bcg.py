@@ -238,8 +238,11 @@ class TestMovementDetector:
         for _ in range(30):
             detector.process(calm)
 
-        # Large movement
-        movement = np.ones(100, dtype=np.float32) * 1.0
+        # Large movement - needs peak-to-peak variation > 5x baseline
+        # Create signal with large amplitude swings
+        movement = np.zeros(100, dtype=np.float32)
+        movement[::2] = 1.0   # Even indices high
+        movement[1::2] = -1.0  # Odd indices low
         is_moving = detector.process(movement)
 
         assert is_moving

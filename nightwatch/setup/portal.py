@@ -16,7 +16,8 @@ from typing import Any
 from fastapi import FastAPI, Request, Response, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+import pydantic
+from pydantic import BaseModel, Field
 import uvicorn
 
 logger = logging.getLogger(__name__)
@@ -29,8 +30,8 @@ TEMPLATES_DIR = Path(__file__).parent / "wizard" / "templates"
 class WiFiCredentials(BaseModel):
     """WiFi network credentials."""
 
-    ssid: str
-    password: str
+    ssid: str = Field(min_length=1)
+    password: str  # Empty password allowed for open networks
 
 
 class MonitorName(BaseModel):

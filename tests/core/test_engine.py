@@ -236,7 +236,11 @@ class TestAlertEngine:
         await engine.start()
 
         alerts_received = []
-        engine.on_alert = lambda a: alerts_received.append(a)
+
+        async def capture_alert(a):
+            alerts_received.append(a)
+
+        engine.on_alert = capture_alert
 
         event = Event(
             detector="radar",
