@@ -172,6 +172,60 @@ python -m nightwatch --mock-sensors
 cd dashboard-ui && npm run dev
 ```
 
+### Docker Development
+
+The easiest way to run everything locally:
+
+```bash
+# First time setup:
+docker compose up -d convex      # Start Convex database
+./scripts/deploy-convex.sh       # Deploy Convex functions (one-time)
+docker compose up                # Start all services
+
+# For hot-reload development:
+docker compose watch
+
+# After `docker compose down -v` (volume reset):
+./scripts/deploy-convex.sh       # Re-deploy Convex functions
+```
+
+**Services:**
+- Backend: http://localhost:8000 (Python API + mock sensors)
+- Dashboard: http://localhost:3000 (Next.js UI)
+- Convex: http://localhost:3210 (real-time database)
+- Simulator: http://localhost:8000/sim (trigger test scenarios)
+
+### Convex Self-Hosted Setup
+
+The dashboard uses [Convex](https://convex.dev) for real-time data. For local development, we run a self-hosted Convex backend in Docker.
+
+**How it works:**
+1. Python backend pushes sensor data to Convex via HTTP mutations
+2. Next.js dashboard subscribes to Convex queries for real-time updates
+3. Functions in `dashboard-ui/convex/*.ts` define the database schema and queries
+
+**Manual Convex deployment (if needed):**
+
+```bash
+cd dashboard-ui
+
+# Get admin key from running Convex container
+docker exec nightwatch-convex /convex/generate_admin_key.sh
+
+# Set environment variables
+export CONVEX_SELF_HOSTED_URL=http://localhost:3210
+export CONVEX_SELF_HOSTED_ADMIN_KEY="convex-self-hosted|<key-from-above>"
+
+# Deploy functions
+npx convex dev --once
+```
+
+Or add to `dashboard-ui/.env.local`:
+```
+CONVEX_SELF_HOSTED_URL=http://localhost:3210
+CONVEX_SELF_HOSTED_ADMIN_KEY=convex-self-hosted|<your-key>
+```
+
 ## Roadmap
 
 - [x] Radar respiration detection

@@ -7,6 +7,7 @@ Uses HTTP mutations to send data to Convex local backend.
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 import logging
 from dataclasses import dataclass
@@ -23,7 +24,7 @@ logger = logging.getLogger(__name__)
 class ConvexConfig:
     """Configuration for Convex connection."""
 
-    url: str = "http://localhost:3210"
+    url: str = os.environ.get("CONVEX_URL", "http://localhost:3210")
     timeout: float = 5.0
     batch_interval: float = 1.0  # Batch readings every N seconds
     retry_attempts: int = 3

@@ -78,12 +78,22 @@ const config: Config = {
           "50%": { transform: "scale(1)", opacity: "0.5" },
           "100%": { transform: "scale(0.95)", opacity: "1" },
         },
+        "pulse-slow": {
+          "0%, 100%": { opacity: "1" },
+          "50%": { opacity: "0.7" },
+        },
+        "pulse-fast": {
+          "0%, 100%": { opacity: "1", borderColor: "hsl(var(--danger))" },
+          "50%": { opacity: "0.8", borderColor: "hsl(var(--danger) / 0.5)" },
+        },
       },
       animation: {
         "accordion-down": "accordion-down 0.2s ease-out",
         "accordion-up": "accordion-up 0.2s ease-out",
         breathe: "breathe 4s ease-in-out infinite",
         "pulse-ring": "pulse-ring 2s ease-in-out infinite",
+        "pulse-slow": "pulse-slow 2s ease-in-out infinite",
+        "pulse-fast": "pulse-fast 0.75s ease-in-out infinite",
       },
     },
   },

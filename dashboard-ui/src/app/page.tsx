@@ -73,6 +73,8 @@ export default function Dashboard() {
           status={vitals?.detectors?.bcg?.state ?? "uncertain"}
           isLoading={isLoading}
           normalRange={{ min: 50, max: 100 }}
+          warningRange={{ low: 40, high: 120 }}
+          criticalRange={{ low: 35, high: 150 }}
         />
 
         <VitalCard
@@ -82,7 +84,9 @@ export default function Dashboard() {
           icon={<Wind className="h-5 w-5" />}
           status={vitals?.detectors?.radar?.state ?? "uncertain"}
           isLoading={isLoading}
-          normalRange={{ min: 8, max: 20 }}
+          normalRange={{ min: 10, max: 25 }}
+          warningRange={{ low: 6, high: 30 }}
+          criticalRange={{ low: 4, high: 35 }}
         />
 
         <VitalCard

@@ -5,6 +5,13 @@ FROM node:20-slim AS builder
 
 WORKDIR /app
 
+# Build args for Next.js (needed at build time for NEXT_PUBLIC_* vars)
+ARG NEXT_PUBLIC_API_URL=http://localhost:8000
+ARG NEXT_PUBLIC_CONVEX_URL=http://localhost:3210
+
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_CONVEX_URL=$NEXT_PUBLIC_CONVEX_URL
+
 # Copy package files
 COPY package*.json ./
 

@@ -9,6 +9,7 @@ import {
   Tooltip,
   ResponsiveContainer,
   Legend,
+  ReferenceArea,
 } from "recharts";
 import { format } from "date-fns";
 
@@ -23,6 +24,25 @@ interface Reading {
 interface VitalsChartProps {
   data: Reading[];
 }
+
+// Alert zone thresholds
+const RESPIRATION_ZONES = {
+  criticalLow: 4,
+  warningLow: 6,
+  normalLow: 10,
+  normalHigh: 25,
+  warningHigh: 30,
+  criticalHigh: 35,
+};
+
+const HEART_RATE_ZONES = {
+  criticalLow: 35,
+  warningLow: 40,
+  normalLow: 50,
+  normalHigh: 100,
+  warningHigh: 120,
+  criticalHigh: 150,
+};
 
 export function VitalsChart({ data }: VitalsChartProps) {
   if (!data || data.length === 0) {
@@ -99,6 +119,70 @@ export function VitalsChart({ data }: VitalsChartProps) {
               return labels[value] || value;
             }}
           />
+          {/* Respiration Alert Zones (left Y-axis) */}
+          <ReferenceArea
+            yAxisId="left"
+            y1={0}
+            y2={RESPIRATION_ZONES.criticalLow}
+            fill="hsl(0 84.2% 60.2%)"
+            fillOpacity={0.15}
+          />
+          <ReferenceArea
+            yAxisId="left"
+            y1={RESPIRATION_ZONES.criticalLow}
+            y2={RESPIRATION_ZONES.warningLow}
+            fill="hsl(45.4 93.4% 47.5%)"
+            fillOpacity={0.1}
+          />
+          <ReferenceArea
+            yAxisId="left"
+            y1={RESPIRATION_ZONES.warningHigh}
+            y2={RESPIRATION_ZONES.criticalHigh}
+            fill="hsl(45.4 93.4% 47.5%)"
+            fillOpacity={0.1}
+          />
+          <ReferenceArea
+            yAxisId="left"
+            y1={RESPIRATION_ZONES.criticalHigh}
+            y2={50}
+            fill="hsl(0 84.2% 60.2%)"
+            fillOpacity={0.15}
+          />
+
+          {/* Heart Rate Alert Zones (right Y-axis) */}
+          <ReferenceArea
+            yAxisId="right"
+            y1={0}
+            y2={HEART_RATE_ZONES.criticalLow}
+            fill="hsl(0 84.2% 60.2%)"
+            fillOpacity={0.1}
+            stroke="none"
+          />
+          <ReferenceArea
+            yAxisId="right"
+            y1={HEART_RATE_ZONES.criticalLow}
+            y2={HEART_RATE_ZONES.warningLow}
+            fill="hsl(45.4 93.4% 47.5%)"
+            fillOpacity={0.08}
+            stroke="none"
+          />
+          <ReferenceArea
+            yAxisId="right"
+            y1={HEART_RATE_ZONES.warningHigh}
+            y2={HEART_RATE_ZONES.criticalHigh}
+            fill="hsl(45.4 93.4% 47.5%)"
+            fillOpacity={0.08}
+            stroke="none"
+          />
+          <ReferenceArea
+            yAxisId="right"
+            y1={HEART_RATE_ZONES.criticalHigh}
+            y2={180}
+            fill="hsl(0 84.2% 60.2%)"
+            fillOpacity={0.1}
+            stroke="none"
+          />
+
           <Line
             yAxisId="left"
             type="monotone"

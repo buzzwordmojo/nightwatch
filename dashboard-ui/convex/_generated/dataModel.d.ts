@@ -1,106 +1,60 @@
 /* eslint-disable */
 /**
- * Generated data model types for Convex.
+ * Generated data model types.
  *
- * THIS FILE IS GENERATED - DO NOT EDIT
+ * THIS CODE IS AUTOMATICALLY GENERATED.
+ *
+ * To regenerate, run `npx convex dev`.
+ * @module
  */
 
-import type { GenericDataModel, GenericDocument, GenericTableInfo } from "convex/server";
+import type {
+  DataModelFromSchemaDefinition,
+  DocumentByName,
+  TableNamesInDataModel,
+  SystemTableNames,
+} from "convex/server";
 import type { GenericId } from "convex/values";
+import schema from "../schema.js";
 
-export type TableNames =
-  | "detectorState"
-  | "readings"
-  | "alerts"
-  | "systemStatus"
-  | "settings";
+/**
+ * The names of all of your Convex tables.
+ */
+export type TableNames = TableNamesInDataModel<DataModel>;
 
-export type DataModel = {
-  detectorState: {
-    document: {
-      _id: GenericId<"detectorState">;
-      _creationTime: number;
-      detector: string;
-      state: string;
-      confidence: number;
-      value: any;
-      updatedAt: number;
-    };
-    fieldPaths: "_id" | "_creationTime" | "detector" | "state" | "confidence" | "value" | "updatedAt";
-    indexes: {
-      by_detector: ["detector", "_creationTime"];
-    };
-    searchIndexes: {};
-    vectorIndexes: {};
-  };
-  readings: {
-    document: {
-      _id: GenericId<"readings">;
-      _creationTime: number;
-      timestamp: number;
-      respirationRate?: number;
-      heartRate?: number;
-      breathingAmplitude?: number;
-      signalQuality?: number;
-      bedOccupied?: boolean;
-    };
-    fieldPaths: "_id" | "_creationTime" | "timestamp" | "respirationRate" | "heartRate" | "breathingAmplitude" | "signalQuality" | "bedOccupied";
-    indexes: {
-      by_timestamp: ["timestamp", "_creationTime"];
-    };
-    searchIndexes: {};
-    vectorIndexes: {};
-  };
-  alerts: {
-    document: {
-      _id: GenericId<"alerts">;
-      _creationTime: number;
-      alertId: string;
-      level: string;
-      source: string;
-      message: string;
-      triggeredAt: number;
-      acknowledgedAt?: number;
-      acknowledgedBy?: string;
-      resolved: boolean;
-      resolvedAt?: number;
-    };
-    fieldPaths: "_id" | "_creationTime" | "alertId" | "level" | "source" | "message" | "triggeredAt" | "acknowledgedAt" | "acknowledgedBy" | "resolved" | "resolvedAt";
-    indexes: {
-      by_triggered: ["triggeredAt", "_creationTime"];
-      by_resolved: ["resolved", "_creationTime"];
-    };
-    searchIndexes: {};
-    vectorIndexes: {};
-  };
-  systemStatus: {
-    document: {
-      _id: GenericId<"systemStatus">;
-      _creationTime: number;
-      component: string;
-      status: string;
-      message?: string;
-      updatedAt: number;
-    };
-    fieldPaths: "_id" | "_creationTime" | "component" | "status" | "message" | "updatedAt";
-    indexes: {
-      by_component: ["component", "_creationTime"];
-    };
-    searchIndexes: {};
-    vectorIndexes: {};
-  };
-  settings: {
-    document: {
-      _id: GenericId<"settings">;
-      _creationTime: number;
-      key: string;
-      value: any;
-    };
-    fieldPaths: "_id" | "_creationTime" | "key" | "value";
-    indexes: {
-      by_key: ["key", "_creationTime"];
-    };
-    searchIndexes: {};
-    vectorIndexes: {};
-  };
-};
+/**
+ * The type of a document stored in Convex.
+ *
+ * @typeParam TableName - A string literal type of the table name (like "users").
+ */
+export type Doc<TableName extends TableNames> = DocumentByName<
+  DataModel,
+  TableName
+>;
+
+/**
+ * An identifier for a document in Convex.
+ *
+ * Convex documents are uniquely identified by their `Id`, which is accessible
+ * on the `_id` field. To learn more, see [Document IDs](https://docs.convex.dev/using/document-ids).
+ *
+ * Documents can be loaded using `db.get(tableName, id)` in query and mutation functions.
+ *
+ * IDs are just strings at runtime, but this type can be used to distinguish them from other
+ * strings when type checking.
+ *
+ * @typeParam TableName - A string literal type of the table name (like "users").
+ */
+export type Id<TableName extends TableNames | SystemTableNames> =
+  GenericId<TableName>;
+
+/**
+ * A type describing your Convex data model.
+ *
+ * This type includes information about what tables you have, the type of
+ * documents stored in those tables, and the indexes defined on them.
+ *
+ * This type is used to parameterize methods like `queryGeneric` and
+ * `mutationGeneric` to make them type-safe.
+ */
+export type DataModel = DataModelFromSchemaDefinition<typeof schema>;

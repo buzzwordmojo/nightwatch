@@ -235,6 +235,21 @@ class DashboardServer:
             border-radius: 12px;
             padding: 24px;
             text-align: center;
+            transition: background 0.3s ease, border-color 0.3s ease;
+            border: 2px solid transparent;
+        }
+        .card.warning {
+            background: linear-gradient(135deg, #78350f 0%, #16213e 100%);
+            border-color: #f59e0b;
+        }
+        .card.critical {
+            background: linear-gradient(135deg, #7f1d1d 0%, #16213e 100%);
+            border-color: #ef4444;
+            animation: pulse-card 1s infinite;
+        }
+        @keyframes pulse-card {
+            0%, 100% { border-color: #ef4444; }
+            50% { border-color: #fca5a5; }
         }
         .card-label {
             font-size: 14px;
@@ -260,30 +275,66 @@ class DashboardServer:
         }
         .card-status.warning { color: #f59e0b; }
         .card-status.alert { color: #ef4444; }
-        .chart-container {
+        .charts-section {
             background: #16213e;
             border-radius: 12px;
             padding: 24px;
             margin-bottom: 30px;
         }
+        .charts-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+        .time-tabs {
+            display: flex;
+            gap: 4px;
+        }
+        .time-tab {
+            padding: 6px 12px;
+            border: none;
+            border-radius: 4px;
+            background: transparent;
+            color: #666;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .time-tab:hover { color: #888; }
+        .time-tab.active { background: #374151; color: white; }
         .chart-title {
             font-size: 16px;
-            color: #888;
-            margin-bottom: 16px;
+            font-weight: 600;
+            color: #fff;
         }
-        .chart {
-            height: 150px;
+        .chart-container {
+            position: relative;
+            height: 200px;
+        }
+        .chart-legend {
             display: flex;
-            align-items: flex-end;
-            gap: 2px;
+            justify-content: center;
+            gap: 24px;
+            margin-top: 12px;
+            font-size: 13px;
+            color: #888;
         }
-        .chart-bar {
-            flex: 1;
-            background: #3b82f6;
-            border-radius: 2px 2px 0 0;
-            min-height: 2px;
-            transition: height 0.3s ease;
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
         }
+        .legend-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+        }
+        .legend-dot.breathing { background: #3b82f6; }
+        .legend-dot.heartrate { background: #8b5cf6; }
+        .legend-dot.movement { background: #10b981; }
         .events {
             background: #16213e;
             border-radius: 12px;
@@ -350,6 +401,8 @@ class DashboardServer:
         }
         .no-data { color: #666; font-style: italic; }
     </style>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
 </head>
 <body>
     <div class="container">
@@ -384,9 +437,25 @@ class DashboardServer:
             </div>
         </div>
 
-        <div class="chart-container">
-            <div class="chart-title">Respiration (last 2 minutes)</div>
-            <div id="resp-chart" class="chart"></div>
+        <div class="charts-section">
+            <div class="charts-header">
+                <div class="chart-title">Vital Signs</div>
+                <div class="time-tabs">
+                    <button class="time-tab active" onclick="selectTimeRange(1)">1m</button>
+                    <button class="time-tab" onclick="selectTimeRange(5)">5m</button>
+                    <button class="time-tab" onclick="selectTimeRange(15)">15m</button>
+                    <button class="time-tab" onclick="selectTimeRange(30)">30m</button>
+                    <button class="time-tab" onclick="selectTimeRange(60)">60m</button>
+                </div>
+            </div>
+            <div class="chart-container">
+                <canvas id="vitals-chart"></canvas>
+            </div>
+            <div class="chart-legend">
+                <span class="legend-item"><span class="legend-dot breathing"></span> Breathing</span>
+                <span class="legend-item"><span class="legend-dot heartrate"></span> Heart Rate</span>
+                <span class="legend-item"><span class="legend-dot movement"></span> Movement</span>
+            </div>
         </div>
 
         <div class="events">
@@ -410,8 +479,118 @@ class DashboardServer:
 
     <script>
         let ws;
-        let respHistory = [];
-        const maxHistory = 120;
+        let vitalsChart;
+
+        // Chart data - store with timestamps
+        const chartData = {
+            breathing: [],
+            heartrate: [],
+            movement: []
+        };
+        const maxDataPoints = 3600;  // 1 hour at 1 sample/sec
+
+        // Chart state
+        let currentTimeRange = 1;  // minutes
+
+        function initChart() {
+            console.log('Initializing chart...');
+            const canvas = document.getElementById('vitals-chart');
+            console.log('Canvas element:', canvas);
+            const ctx = canvas.getContext('2d');
+            console.log('Canvas context:', ctx);
+            vitalsChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    datasets: [
+                        {
+                            label: 'Breathing (BPM)',
+                            data: [],
+                            borderColor: '#3b82f6',
+                            backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                            fill: false,
+                            tension: 0.3,
+                            pointRadius: 0,
+                            borderWidth: 2,
+                            yAxisID: 'y'
+                        },
+                        {
+                            label: 'Heart Rate (BPM)',
+                            data: [],
+                            borderColor: '#8b5cf6',
+                            backgroundColor: 'rgba(139, 92, 246, 0.1)',
+                            fill: false,
+                            tension: 0.3,
+                            pointRadius: 0,
+                            borderWidth: 2,
+                            yAxisID: 'y1'
+                        },
+                        {
+                            label: 'Movement',
+                            data: [],
+                            borderColor: '#10b981',
+                            backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                            fill: false,
+                            tension: 0.3,
+                            pointRadius: 0,
+                            borderWidth: 2,
+                            yAxisID: 'y2'
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: { duration: 0 },
+                    interaction: { intersect: false, mode: 'index' },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: function(ctx) {
+                                    const label = ctx.dataset.label;
+                                    const val = ctx.parsed.y;
+                                    if (label.includes('Movement')) return 'Movement: ' + (val * 100).toFixed(0) + '%';
+                                    return label.split(' ')[0] + ': ' + val.toFixed(1) + ' BPM';
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            type: 'time',
+                            time: { unit: 'second', displayFormats: { second: 'HH:mm:ss' } },
+                            grid: { color: '#333' },
+                            ticks: { color: '#888', maxTicksLimit: 6 }
+                        },
+                        y: {
+                            type: 'linear',
+                            position: 'left',
+                            min: 0,
+                            max: 30,
+                            grid: { color: '#333' },
+                            ticks: { color: '#3b82f6', stepSize: 10 },
+                            title: { display: false }
+                        },
+                        y1: {
+                            type: 'linear',
+                            position: 'right',
+                            min: 40,
+                            max: 140,
+                            grid: { drawOnChartArea: false },
+                            ticks: { color: '#8b5cf6', stepSize: 20 },
+                            title: { display: false }
+                        },
+                        y2: {
+                            type: 'linear',
+                            position: 'right',
+                            min: 0,
+                            max: 1,
+                            display: false  // Hidden - movement uses left scale conceptually
+                        }
+                    }
+                }
+            });
+        }
 
         function connect() {
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -435,15 +614,30 @@ class DashboardServer:
         }
 
         function updateDisplay(data) {
-            // Update vital signs
+            const now = Date.now();
             const resp = data.respiration_rate;
             const hr = data.heart_rate;
             const movement = data.movement;
 
+            // Store data with timestamps
+            if (resp !== null && resp !== undefined) {
+                chartData.breathing.push({ x: now, y: resp });
+                if (chartData.breathing.length > maxDataPoints) chartData.breathing.shift();
+            }
+            if (hr !== null && hr !== undefined) {
+                chartData.heartrate.push({ x: now, y: hr });
+                if (chartData.heartrate.length > maxDataPoints) chartData.heartrate.shift();
+            }
+            if (movement !== null && movement !== undefined) {
+                chartData.movement.push({ x: now, y: movement });
+                if (chartData.movement.length > maxDataPoints) chartData.movement.shift();
+            }
+
+            // Update vital signs display
             document.getElementById('respiration-value').textContent =
-                resp !== null ? Math.round(resp) : '--';
+                resp !== null && resp !== undefined ? Math.round(resp) : '--';
             document.getElementById('heartrate-value').textContent =
-                hr !== null ? Math.round(hr) : '--';
+                hr !== null && hr !== undefined ? Math.round(hr) : '--';
 
             // Movement level
             let movementText = 'Low';
@@ -460,7 +654,7 @@ class DashboardServer:
 
             // Respiration status
             const respStatus = document.getElementById('respiration-status');
-            if (resp === null) {
+            if (resp === null || resp === undefined) {
                 respStatus.textContent = 'no data';
                 respStatus.className = 'card-status';
             } else if (resp < 6) {
@@ -474,12 +668,34 @@ class DashboardServer:
                 respStatus.className = 'card-status';
             }
 
-            // Update chart
-            if (resp !== null) {
-                respHistory.push(resp);
-                if (respHistory.length > maxHistory) respHistory.shift();
-                updateChart();
+            // Heart rate status
+            const hrStatus = document.getElementById('heartrate-status');
+            if (hr === null || hr === undefined) {
+                hrStatus.textContent = 'no data';
+                hrStatus.className = 'card-status';
+            } else if (hr < 40 || hr > 150) {
+                hrStatus.textContent = 'critical';
+                hrStatus.className = 'card-status alert';
+            } else if (hr < 50 || hr > 120) {
+                hrStatus.textContent = 'abnormal';
+                hrStatus.className = 'card-status warning';
+            } else {
+                hrStatus.textContent = 'normal';
+                hrStatus.className = 'card-status';
             }
+
+            // Movement status
+            const movStatus = document.getElementById('movement-status');
+            if (movement > 0.8) {
+                movStatus.textContent = 'active';
+                movStatus.className = 'card-status warning';
+            } else {
+                movStatus.textContent = 'sleeping';
+                movStatus.className = 'card-status';
+            }
+
+            // Update chart
+            updateChart();
 
             // Update events
             if (data.recent_events && data.recent_events.length > 0) {
@@ -487,23 +703,36 @@ class DashboardServer:
             }
         }
 
-        function updateChart() {
-            const chart = document.getElementById('resp-chart');
-            chart.innerHTML = '';
-
-            const max = Math.max(...respHistory, 20);
-            const min = Math.min(...respHistory, 0);
-            const range = max - min || 1;
-
-            respHistory.forEach(val => {
-                const bar = document.createElement('div');
-                bar.className = 'chart-bar';
-                const height = ((val - min) / range) * 100;
-                bar.style.height = Math.max(2, height) + '%';
-                if (val < 6) bar.style.background = '#ef4444';
-                else if (val < 10) bar.style.background = '#f59e0b';
-                chart.appendChild(bar);
+        function selectTimeRange(minutes) {
+            currentTimeRange = minutes;
+            document.querySelectorAll('.time-tab').forEach(tab => {
+                tab.classList.toggle('active', tab.textContent === minutes + 'm');
             });
+            updateChart();
+        }
+
+        function updateChart() {
+            if (!vitalsChart) return;
+
+            const now = Date.now();
+            const cutoff = now - (currentTimeRange * 60 * 1000);
+
+            // Filter data for each dataset
+            vitalsChart.data.datasets[0].data = chartData.breathing.filter(d => d.x >= cutoff);
+            vitalsChart.data.datasets[1].data = chartData.heartrate.filter(d => d.x >= cutoff);
+            vitalsChart.data.datasets[2].data = chartData.movement.filter(d => d.x >= cutoff);
+
+            vitalsChart.options.scales.x.min = cutoff;
+            vitalsChart.options.scales.x.max = now;
+
+            // Adjust time unit based on range
+            if (currentTimeRange <= 1) {
+                vitalsChart.options.scales.x.time.unit = 'second';
+            } else {
+                vitalsChart.options.scales.x.time.unit = 'minute';
+            }
+
+            vitalsChart.update('none');
         }
 
         function updateEvents(events) {
@@ -534,6 +763,8 @@ class DashboardServer:
             });
         }
 
+        // Initialize on page load
+        initChart();
         connect();
     </script>
 </body>

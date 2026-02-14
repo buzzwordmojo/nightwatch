@@ -1,16 +1,24 @@
-version: "3.8"
-
 # Nightwatch Local Development
 #
-# Start everything:  docker compose up
-# Just backend:      docker compose up backend
-# With simulation:   docker compose --profile simulation up
-# Test alerts:       docker compose --profile test-alerts up
+# Quick Start:
+#   1. docker compose up -d convex      # Start Convex first
+#   2. ./scripts/deploy-convex.sh       # Deploy Convex functions (first time only)
+#   3. docker compose up                # Start all services
+#
+# Or for development with hot-reload:
+#   docker compose watch
+#
+# Other commands:
+#   Just backend:      docker compose up backend
+#   With simulation:   docker compose --profile simulation up
+#   Test alerts:       docker compose --profile test-alerts up
 #
 # Services:
 #   - backend:   Python API + mock sensors (port 8000)
 #   - dashboard: Next.js UI (port 3000)
-#   - convex:    Self-hosted Convex DB (port 3210, dashboard 6791)
+#   - convex:    Self-hosted Convex DB (port 3210)
+#
+# Note: After `docker compose down -v`, run ./scripts/deploy-convex.sh again
 #
 # Works on x86_64 (dev) and ARM64 (Raspberry Pi)
 
@@ -27,21 +35,39 @@ services:
     environment:
       - NIGHTWATCH_CONFIG=/app/config/docker.yaml
       - NIGHTWATCH_MOCK_SENSORS=true
+      - PYTHONPATH=/app
+      - CONVEX_URL=http://convex:3210
+    command: ["python", "-m", "nightwatch", "--mock-sensors", "--convex", "--config", "/app/config/docker.yaml"]
+    depends_on:
+      - convex
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 10s
       timeout: 5s
       retries: 3
     restart: unless-stopped
+    develop:
+      watch:
+        # Sync Python source code and restart on changes
+        - action: sync+restart
+          path: ./nightwatch
+          target: /app/nightwatch
+        # Rebuild on config changes
+        - action: rebuild
+          path: ./config
 
   # Next.js dashboard
   dashboard:
-    build: ./dashboard-ui
+    build:
+      context: ./dashboard-ui
+      args:
+        - NEXT_PUBLIC_API_URL=http://localhost:8000
+        - NEXT_PUBLIC_CONVEX_URL=http://localhost:3210
     ports:
       - "3000:3000"
     environment:
-      - NEXT_PUBLIC_API_URL=http://backend:8000
-      - NEXT_PUBLIC_CONVEX_URL=http://convex:3210
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - NEXT_PUBLIC_CONVEX_URL=http://localhost:3210
     depends_on:
       backend:
         condition: service_healthy

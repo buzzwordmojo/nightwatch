@@ -1,7 +1,7 @@
 "use client";
 
 import { ReactNode } from "react";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, type CardProps } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
 interface VitalCardProps {
@@ -12,7 +12,24 @@ interface VitalCardProps {
   status: string;
   isLoading?: boolean;
   normalRange?: { min: number; max: number };
+  warningRange?: { low: number; high: number };
+  criticalRange?: { low: number; high: number };
   showAsText?: boolean;
+}
+
+// Map status string to Card variant
+function getCardVariant(status: string): CardProps["variant"] {
+  switch (status) {
+    case "normal":
+      return "success";
+    case "warning":
+      return "warning";
+    case "alert":
+    case "critical":
+      return "critical";
+    default:
+      return "default";
+  }
 }
 
 export function VitalCard({
@@ -23,36 +40,46 @@ export function VitalCard({
   status,
   isLoading,
   normalRange,
+  warningRange,
+  criticalRange,
   showAsText,
 }: VitalCardProps) {
-  const getStatusStyles = () => {
-    switch (status) {
-      case "normal":
-        return "border-success/50 breathing-glow";
-      case "warning":
-        return "border-warning/50 bg-warning/5";
-      case "alert":
-      case "critical":
-        return "border-danger/50 bg-danger/5 alert-pulse";
-      default:
-        return "border-muted";
+  // Derive status from value if ranges provided
+  const derivedStatus = (() => {
+    if (typeof value !== "number") return status;
+
+    if (criticalRange) {
+      if (value < criticalRange.low || value > criticalRange.high) {
+        return "critical";
+      }
     }
-  };
+    if (warningRange) {
+      if (value < warningRange.low || value > warningRange.high) {
+        return "warning";
+      }
+    }
+    if (normalRange) {
+      if (value >= normalRange.min && value <= normalRange.max) {
+        return "normal";
+      }
+    }
+    return status;
+  })();
 
   const getValueColor = () => {
     if (showAsText) {
-      return status === "normal" ? "text-success" : "text-muted-foreground";
+      return derivedStatus === "normal" ? "text-success" : "text-muted-foreground";
     }
 
     if (typeof value !== "number" || !normalRange) {
       return "text-foreground";
     }
 
-    if (value < normalRange.min || value > normalRange.max) {
-      return "text-warning";
-    }
+    if (derivedStatus === "critical") return "text-danger";
+    if (derivedStatus === "warning") return "text-warning";
+    if (value >= normalRange.min && value <= normalRange.max) return "text-success";
 
-    return "text-success";
+    return "text-foreground";
   };
 
   const displayValue = () => {
@@ -63,17 +90,17 @@ export function VitalCard({
   };
 
   return (
-    <Card className={cn("transition-all duration-300", getStatusStyles())}>
+    <Card variant={getCardVariant(derivedStatus)}>
       <CardContent className="p-6">
         <div className="flex items-center justify-between mb-2">
           <span className="text-sm text-muted-foreground">{title}</span>
           <span
             className={cn(
               "p-2 rounded-full",
-              status === "normal" && "bg-success/20 text-success",
-              status === "warning" && "bg-warning/20 text-warning",
-              status === "alert" && "bg-danger/20 text-danger",
-              status === "uncertain" && "bg-muted text-muted-foreground"
+              derivedStatus === "normal" && "bg-success/20 text-success",
+              derivedStatus === "warning" && "bg-warning/20 text-warning",
+              (derivedStatus === "alert" || derivedStatus === "critical") && "bg-danger/20 text-danger",
+              derivedStatus === "uncertain" && "bg-muted text-muted-foreground"
             )}
           >
             {icon}

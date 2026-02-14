@@ -1,9 +1,16 @@
 /* eslint-disable */
 /**
- * Generated API types for Convex.
+ * Generated `api` utility.
  *
- * THIS FILE IS GENERATED - DO NOT EDIT
+ * THIS CODE IS AUTOMATICALLY GENERATED.
+ *
+ * To regenerate, run `npx convex dev`.
+ * @module
  */
+
+import type * as alerts from "../alerts.js";
+import type * as system from "../system.js";
+import type * as vitals from "../vitals.js";
 
 import type {
   ApiFromModules,
@@ -11,24 +18,36 @@ import type {
   FunctionReference,
 } from "convex/server";
 
-import type * as alerts from "../alerts.js";
-import type * as system from "../system.js";
-import type * as vitals from "../vitals.js";
-
-/**
- * A utility for referencing Convex functions in your app's API.
- */
 declare const fullApi: ApiFromModules<{
   alerts: typeof alerts;
   system: typeof system;
   vitals: typeof vitals;
 }>;
 
+/**
+ * A utility for referencing Convex functions in your app's public API.
+ *
+ * Usage:
+ * ```js
+ * const myFunctionReference = api.myModule.myFunction;
+ * ```
+ */
 export declare const api: FilterApi<
   typeof fullApi,
   FunctionReference<any, "public">
 >;
+
+/**
+ * A utility for referencing Convex functions in your app's internal API.
+ *
+ * Usage:
+ * ```js
+ * const myFunctionReference = internal.myModule.myFunction;
+ * ```
+ */
 export declare const internal: FilterApi<
   typeof fullApi,
   FunctionReference<any, "internal">
 >;
+
+export declare const components: {};

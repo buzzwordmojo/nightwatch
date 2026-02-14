@@ -146,13 +146,50 @@ npx shadcn@latest add card
 
 ### Convex Functions
 
-Convex functions are in `convex/`. After editing, they auto-deploy in dev mode.
+Convex functions are in `convex/`.
 
 Key functions:
 - `vitals.getCurrentVitals` - Get current state of all detectors
 - `vitals.getRecentReadings` - Get chart data
 - `alerts.getActive` - Get unresolved alerts
 - `system.pause` / `system.resume` - Pause monitoring
+
+### Deploying to Self-Hosted Convex
+
+The self-hosted Convex backend requires functions to be deployed before the dashboard can use them.
+
+**Using the deploy script (recommended):**
+```bash
+# From project root
+./scripts/deploy-convex.sh
+```
+
+**Manual deployment:**
+```bash
+# 1. Get admin key from Convex container
+docker exec nightwatch-convex /convex/generate_admin_key.sh
+# Output: convex-self-hosted|019b9477a9c...
+
+# 2. Set environment variables
+export CONVEX_SELF_HOSTED_URL=http://localhost:3210
+export CONVEX_SELF_HOSTED_ADMIN_KEY="convex-self-hosted|<key-from-step-1>"
+
+# 3. Deploy functions
+npx convex dev --once
+```
+
+**Or add to `.env.local`:**
+```
+CONVEX_SELF_HOSTED_URL=http://localhost:3210
+CONVEX_SELF_HOSTED_ADMIN_KEY=convex-self-hosted|<your-key>
+```
+
+Then run `npx convex dev --once` to deploy.
+
+**When to redeploy:**
+- After `docker compose down -v` (Convex volume reset)
+- After editing files in `convex/` directory
+- First time setup
 
 ## Building for Production
 
