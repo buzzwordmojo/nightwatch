@@ -1,0 +1,29 @@
+[Unit]
+Description=Nightwatch Epilepsy Monitor
+Documentation=https://github.com/YOUR_USERNAME/nightwatch
+After=network.target
+
+[Service]
+Type=simple
+User=nightwatch
+Group=nightwatch
+WorkingDirectory=/opt/nightwatch
+Environment="PATH=/opt/nightwatch/venv/bin:/usr/bin"
+ExecStart=/opt/nightwatch/venv/bin/python -m nightwatch.main
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Watchdog - restart if unresponsive
+WatchdogSec=60
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/nightwatch /var/log/nightwatch
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

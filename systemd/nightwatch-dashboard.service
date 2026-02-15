@@ -1,0 +1,27 @@
+[Unit]
+Description=Nightwatch Dashboard
+Documentation=https://github.com/YOUR_USERNAME/nightwatch
+After=network.target nightwatch.service
+
+[Service]
+Type=simple
+User=nightwatch
+Group=nightwatch
+WorkingDirectory=/opt/nightwatch/dashboard
+Environment="NODE_ENV=production"
+Environment="PORT=3000"
+Environment="HOSTNAME=0.0.0.0"
+ExecStart=/usr/bin/node server.js
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

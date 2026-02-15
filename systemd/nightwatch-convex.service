@@ -1,0 +1,27 @@
+[Unit]
+Description=Nightwatch Convex Bridge
+Documentation=https://github.com/YOUR_USERNAME/nightwatch
+After=network.target nightwatch.service
+Wants=nightwatch.service
+
+[Service]
+Type=simple
+User=nightwatch
+Group=nightwatch
+WorkingDirectory=/opt/nightwatch
+Environment="PATH=/opt/nightwatch/venv/bin:/usr/bin"
+ExecStart=/opt/nightwatch/venv/bin/python -m nightwatch.bridge.convex
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/nightwatch
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
