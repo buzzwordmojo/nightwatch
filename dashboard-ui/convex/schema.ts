@@ -49,4 +49,28 @@ export default defineSchema({
     key: v.string(),
     value: v.any(),
   }).index("by_key", ["key"]),
+
+  // Share links for caregivers
+  shareLinks: defineTable({
+    token: v.string(),
+    name: v.string(),
+    createdAt: v.number(),
+    expiresAt: v.optional(v.number()),
+    permissions: v.string(), // "view" | "view+pause"
+    active: v.boolean(),
+  }).index("by_token", ["token"]),
+
+  // Alert rules (editable thresholds)
+  alertRules: defineTable({
+    name: v.string(),
+    enabled: v.boolean(),
+    detector: v.string(),
+    field: v.string(),
+    operator: v.string(),
+    value: v.number(),
+    durationSeconds: v.number(),
+    severity: v.string(),
+    message: v.string(),
+    cooldownSeconds: v.number(),
+  }).index("by_name", ["name"]),
 });

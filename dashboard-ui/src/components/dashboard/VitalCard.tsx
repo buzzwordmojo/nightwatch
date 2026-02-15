@@ -91,12 +91,12 @@ export function VitalCard({
 
   return (
     <Card variant={getCardVariant(derivedStatus)}>
-      <CardContent className="p-6">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-sm text-muted-foreground">{title}</span>
+      <CardContent className="p-3 sm:p-6">
+        <div className="flex items-center justify-between mb-1 sm:mb-2">
+          <span className="text-xs sm:text-sm text-muted-foreground">{title}</span>
           <span
             className={cn(
-              "p-2 rounded-full",
+              "p-1.5 sm:p-2 rounded-full",
               derivedStatus === "normal" && "bg-success/20 text-success",
               derivedStatus === "warning" && "bg-warning/20 text-warning",
               (derivedStatus === "alert" || derivedStatus === "critical") && "bg-danger/20 text-danger",
@@ -107,10 +107,10 @@ export function VitalCard({
           </span>
         </div>
 
-        <div className="flex items-baseline gap-2">
+        <div className="flex items-baseline gap-1 sm:gap-2">
           <span
             className={cn(
-              "text-4xl font-bold tabular-nums",
+              "text-2xl sm:text-4xl font-bold tabular-nums",
               getValueColor(),
               isLoading && "animate-pulse"
             )}
@@ -118,12 +118,12 @@ export function VitalCard({
             {displayValue()}
           </span>
           {unit && !showAsText && (
-            <span className="text-lg text-muted-foreground">{unit}</span>
+            <span className="text-sm sm:text-lg text-muted-foreground">{unit}</span>
           )}
         </div>
 
         {normalRange && typeof value === "number" && (
-          <p className="text-xs text-muted-foreground mt-2">
+          <p className="hidden sm:block text-xs text-muted-foreground mt-2">
             Normal: {normalRange.min}–{normalRange.max} {unit}
           </p>
         )}
