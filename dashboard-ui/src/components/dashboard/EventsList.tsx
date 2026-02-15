@@ -94,7 +94,7 @@ function consolidateAlerts(alerts: Alert[]): EventPeriod[] {
         resolved: alert.resolved,
         count: 1,
       };
-    } else {
+    } else if (currentPeriod) {
       // Extend current period
       currentPeriod.count++;
       currentPeriod.endTime = alert.resolvedAt || alert.triggeredAt;

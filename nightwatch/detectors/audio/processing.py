@@ -1,10 +1,11 @@
 """
-Audio signal processing for breathing detection.
+Audio signal processing for breathing and seizure detection.
 
 Processes audio input to detect:
 - Breathing sounds (200-800 Hz band)
 - Silence periods (potential apnea)
 - Vocalizations (non-rhythmic sounds)
+- Seizure sounds (rhythmic patterns 1-8 Hz, higher frequencies)
 """
 
 from __future__ import annotations
@@ -18,6 +19,16 @@ from scipy import signal as scipy_signal
 
 
 @dataclass
+class SeizureAnalysis:
+    """Result of seizure sound detection."""
+
+    seizure_detected: bool
+    seizure_confidence: float  # 0.0 - 1.0
+    rhythmic_rate: float | None  # Rhythmic pattern rate in Hz
+    duration: float  # Seconds of continuous seizure-like sounds
+
+
+@dataclass
 class BreathingAnalysis:
     """Result of breathing analysis on an audio chunk."""
 
@@ -27,6 +38,8 @@ class BreathingAnalysis:
     breathing_confidence: float  # 0.0 - 1.0
     silence_duration: float  # Seconds of continuous silence
     vocalization_detected: bool
+    seizure_detected: bool  # Rhythmic seizure sounds detected
+    seizure_confidence: float  # 0.0 - 1.0
     energy_level: float  # Overall audio energy
 
 
@@ -54,6 +67,28 @@ class AudioProcessorConfig:
     # Rate estimation
     rate_window_seconds: float = 30.0
     min_breaths_for_rate: int = 3
+
+    # Seizure sound detection
+    # Seizures can produce various rhythmic sounds:
+    # - Tonic-clonic: loud vocalizations, grunting
+    # - Subtle: quiet mouth sounds, lip smacking, labored breathing
+    # - Movement: repetitive rustling from limb movements
+    # Key indicator is RHYTHMIC REPETITION at 1-8 Hz, even if quiet
+    #
+    # IMPORTANT: Must distinguish from breathing/snoring:
+    # - Breathing rate: 0.2-0.5 Hz (12-30 BPM)
+    # - Snoring: repetitive but modulated by breathing envelope
+    # - Seizure: sustained fast rhythm (1-8 Hz) independent of breath cycle
+    seizure_low_hz: float = 100.0  # Lower to catch subtle sounds
+    seizure_high_hz: float = 3000.0  # Higher to catch rustling
+    seizure_rhythm_low_hz: float = 1.5  # Start above breathing harmonics
+    seizure_rhythm_high_hz: float = 8.0
+    seizure_min_duration: float = 5.0  # Longer duration to avoid snoring bursts
+    seizure_energy_threshold: float = 0.005  # Very low - prioritize rhythm over volume
+
+    # Breathing rate range (used to exclude from seizure detection)
+    breathing_rate_low_hz: float = 0.15  # ~9 BPM
+    breathing_rate_high_hz: float = 0.6  # ~36 BPM
 
 
 class BandpassFilter:
@@ -446,12 +481,264 @@ class VocalizationDetector:
         self._vocalization_detected = False
 
 
+class SeizureSoundDetector:
+    """
+    Detect seizure-related sounds.
+
+    Tonic-clonic seizures often produce rhythmic sounds:
+    - Tonic phase: sustained vocalization/grunting
+    - Clonic phase: rhythmic sounds at 1-8 Hz (muscle contractions)
+    - May include teeth grinding, choking sounds
+
+    Detection approach:
+    1. Bandpass filter for seizure frequency range (300-2000 Hz)
+    2. Extract envelope to find amplitude modulation
+    3. Analyze envelope for rhythmic patterns in 1-8 Hz range
+    4. Sustained rhythmic pattern = potential seizure
+    """
+
+    def __init__(self, config: AudioProcessorConfig):
+        """
+        Initialize seizure sound detector.
+
+        Args:
+            config: Audio processing configuration
+        """
+        self._config = config
+
+        # Filter for seizure frequency range
+        self._bandpass = BandpassFilter(
+            config.seizure_low_hz,
+            config.seizure_high_hz,
+            config.sample_rate,
+        )
+
+        # Envelope extractor with faster smoothing for rhythm detection
+        self._envelope = EnvelopeExtractor(config.sample_rate, smoothing_hz=15.0)
+
+        # Store envelope samples for rhythm analysis
+        # Need enough samples for FFT analysis of 1-8 Hz patterns
+        samples_per_second = int(1.0 / config.chunk_duration)
+        self._envelope_buffer: deque[float] = deque(
+            maxlen=samples_per_second * 10  # 10 seconds of data
+        )
+        self._timestamps: deque[float] = deque(maxlen=samples_per_second * 10)
+
+        # Detection state
+        self._seizure_start: float | None = None
+        self._current_duration: float = 0.0
+        self._seizure_detected = False
+        self._seizure_confidence = 0.0
+        self._rhythmic_rate: float | None = None
+
+        # Energy tracking for adaptive threshold
+        self._energy_history: deque[float] = deque(maxlen=100)
+        self._baseline_energy = config.seizure_energy_threshold
+
+    def process(self, audio: np.ndarray, timestamp: float) -> SeizureAnalysis:
+        """
+        Process audio chunk to detect seizure sounds.
+
+        Args:
+            audio: Audio samples (normalized -1 to 1)
+            timestamp: Current timestamp
+
+        Returns:
+            SeizureAnalysis with detection results
+        """
+        # Apply bandpass filter
+        filtered = self._bandpass.filter(audio)
+
+        # Extract envelope
+        envelope = self._envelope.extract(filtered)
+        mean_envelope = float(np.mean(envelope))
+
+        # Update energy history for adaptive threshold
+        self._energy_history.append(mean_envelope)
+        if len(self._energy_history) >= 50:
+            self._baseline_energy = np.percentile(list(self._energy_history), 25)
+
+        # Store envelope sample
+        self._envelope_buffer.append(mean_envelope)
+        self._timestamps.append(timestamp)
+
+        # Need at least 3 seconds of data for rhythm analysis
+        min_samples = int(3.0 / self._config.chunk_duration)
+        if len(self._envelope_buffer) < min_samples:
+            return SeizureAnalysis(
+                seizure_detected=False,
+                seizure_confidence=0.0,
+                rhythmic_rate=None,
+                duration=0.0,
+            )
+
+        # Analyze for rhythmic patterns
+        rhythmic, rate, confidence = self._analyze_rhythm()
+
+        # For seizure detection, rhythm is the PRIMARY indicator
+        # Energy threshold is very low - we care about pattern, not volume
+        # Even quiet rhythmic sounds during sleep are suspicious
+        energy_threshold = max(
+            self._baseline_energy * 1.5,  # Just above noise floor
+            self._config.seizure_energy_threshold,
+        )
+        has_some_energy = mean_envelope > energy_threshold
+
+        # Detect seizure pattern - rhythm is key, energy is secondary
+        # Strong rhythm alone is enough; weak rhythm needs some energy
+        pattern_detected = (
+            (rhythmic and confidence > 0.6) or  # Strong rhythm pattern
+            (rhythmic and has_some_energy and confidence > 0.3)  # Weaker rhythm but audible
+        )
+
+        if pattern_detected:
+            if self._seizure_start is None:
+                self._seizure_start = timestamp
+            self._current_duration = timestamp - self._seizure_start
+            self._rhythmic_rate = rate
+
+            # Only flag as seizure after minimum duration
+            if self._current_duration >= self._config.seizure_min_duration:
+                self._seizure_detected = True
+                # Boost confidence if sustained longer
+                duration_boost = min(0.2, (self._current_duration - 3.0) * 0.05)
+                self._seizure_confidence = min(1.0, confidence + duration_boost)
+        else:
+            # Reset if pattern breaks
+            self._seizure_start = None
+            self._current_duration = 0.0
+            self._seizure_detected = False
+            self._seizure_confidence = 0.0
+            self._rhythmic_rate = None
+
+        return SeizureAnalysis(
+            seizure_detected=self._seizure_detected,
+            seizure_confidence=self._seizure_confidence,
+            rhythmic_rate=self._rhythmic_rate,
+            duration=self._current_duration,
+        )
+
+    def _analyze_rhythm(self) -> tuple[bool, float | None, float]:
+        """
+        Analyze envelope buffer for rhythmic patterns.
+
+        Uses FFT to find dominant frequencies in the envelope,
+        looking for sustained rhythmic patterns in the 1.5-8 Hz range.
+
+        Key distinction from breathing/snoring:
+        - Breathing: 0.2-0.5 Hz base rhythm
+        - Snoring: has breathing-rate modulation (loud during exhale)
+        - Seizure: sustained fast rhythm WITHOUT breathing modulation
+
+        Returns:
+            Tuple of (is_rhythmic, rate_hz, confidence)
+        """
+        envelope_data = np.array(list(self._envelope_buffer))
+
+        # Calculate sample rate from timestamps
+        if len(self._timestamps) < 2:
+            return False, None, 0.0
+
+        timestamps = list(self._timestamps)
+        dt = (timestamps[-1] - timestamps[0]) / (len(timestamps) - 1)
+        if dt <= 0:
+            return False, None, 0.0
+
+        # Remove DC component (mean)
+        envelope_data = envelope_data - np.mean(envelope_data)
+
+        # Apply window to reduce spectral leakage
+        window = np.hanning(len(envelope_data))
+        envelope_data = envelope_data * window
+
+        # FFT
+        fft_result = np.fft.rfft(envelope_data)
+        freqs = np.fft.rfftfreq(len(envelope_data), d=dt)
+        magnitudes = np.abs(fft_result)
+
+        # Check for breathing-rate energy (indicates snoring pattern)
+        breathing_mask = (freqs >= self._config.breathing_rate_low_hz) & (
+            freqs <= self._config.breathing_rate_high_hz
+        )
+        breathing_energy = np.sum(magnitudes[breathing_mask]) if np.any(breathing_mask) else 0
+
+        # Find frequencies in seizure rhythm range (1.5-8 Hz)
+        seizure_mask = (freqs >= self._config.seizure_rhythm_low_hz) & (
+            freqs <= self._config.seizure_rhythm_high_hz
+        )
+
+        if not np.any(seizure_mask):
+            return False, None, 0.0
+
+        seizure_freqs = freqs[seizure_mask]
+        seizure_mags = magnitudes[seizure_mask]
+
+        # Find peak frequency
+        peak_idx = np.argmax(seizure_mags)
+        peak_freq = seizure_freqs[peak_idx]
+        peak_mag = seizure_mags[peak_idx]
+
+        # Calculate total energy and peak prominence
+        total_mag = np.sum(magnitudes[1:])  # Exclude DC
+        if total_mag <= 0:
+            return False, None, 0.0
+
+        # Energy in seizure band vs total
+        seizure_energy = np.sum(seizure_mags)
+        energy_ratio = seizure_energy / total_mag
+
+        # Check if this looks like snoring (breathing-modulated pattern)
+        # Snoring has significant energy at breathing rate AND at higher freq
+        # Seizure has energy at seizure rate but NOT at breathing rate
+        if breathing_energy > 0:
+            seizure_to_breathing_ratio = seizure_energy / breathing_energy
+            # If breathing energy is dominant, this is likely snoring
+            if seizure_to_breathing_ratio < 2.0:
+                # Looks like snoring - fast sounds modulated by breath
+                return False, None, 0.0
+
+        # Peak should be at least 1.5x the average magnitude in the band
+        avg_mag = np.mean(seizure_mags) if len(seizure_mags) > 0 else 0
+        peak_prominence = peak_mag / avg_mag if avg_mag > 0 else 0
+
+        # Rhythmic if we have a clear peak and energy concentration
+        # Thresholds:
+        # - 15% energy concentration in seizure band
+        # - 1.5x peak prominence
+        is_rhythmic = (energy_ratio > 0.15) and (peak_prominence > 1.5)
+
+        # Confidence based on peak prominence and energy concentration
+        # Reduce confidence if there's any breathing-rate energy
+        base_confidence = min(1.0, (energy_ratio * 3) * (peak_prominence / 3))
+
+        # Penalize if breathing energy is present (might be snoring)
+        if breathing_energy > 0 and seizure_energy > 0:
+            snoring_penalty = min(0.3, breathing_energy / seizure_energy * 0.5)
+            confidence = max(0.0, base_confidence - snoring_penalty)
+        else:
+            confidence = base_confidence
+
+        return is_rhythmic, float(peak_freq), confidence
+
+    def reset(self) -> None:
+        """Reset detector state."""
+        self._bandpass.reset()
+        self._envelope.reset()
+        self._envelope_buffer.clear()
+        self._timestamps.clear()
+        self._seizure_start = None
+        self._current_duration = 0.0
+        self._seizure_detected = False
+        self._seizure_confidence = 0.0
+        self._rhythmic_rate = None
+
+
 class AudioProcessor:
     """
     Main audio processing pipeline.
 
-    Combines breathing detection, silence detection, and vocalization
-    detection into a unified analysis.
+    Combines breathing detection, silence detection, vocalization
+    detection, and seizure sound detection into a unified analysis.
     """
 
     def __init__(self, config: AudioProcessorConfig | None = None):
@@ -466,6 +753,7 @@ class AudioProcessor:
         self._breathing = BreathingDetector(self._config)
         self._silence = SilenceDetector(self._config)
         self._vocalization = VocalizationDetector(self._config)
+        self._seizure = SeizureSoundDetector(self._config)
 
         self._chunk_samples = int(self._config.chunk_duration * self._config.sample_rate)
 
@@ -506,6 +794,7 @@ class AudioProcessor:
         breathing_detected, breathing_amplitude = self._breathing.process(audio, timestamp)
         silence_duration = self._silence.process(audio, timestamp)
         vocalization_detected = self._vocalization.process(audio)
+        seizure_analysis = self._seizure.process(audio, timestamp)
 
         # Get breathing rate and confidence
         breathing_rate = self._breathing.get_breathing_rate()
@@ -518,6 +807,8 @@ class AudioProcessor:
             breathing_confidence=breathing_confidence,
             silence_duration=silence_duration,
             vocalization_detected=vocalization_detected,
+            seizure_detected=seizure_analysis.seizure_detected,
+            seizure_confidence=seizure_analysis.seizure_confidence,
             energy_level=energy_level,
         )
 
@@ -526,3 +817,4 @@ class AudioProcessor:
         self._breathing.reset()
         self._silence.reset()
         self._vocalization.reset()
+        self._seizure.reset()

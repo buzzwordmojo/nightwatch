@@ -2,7 +2,7 @@
 Audio detector for Nightwatch.
 
 Uses a USB microphone to detect breathing sounds, silence (potential apnea),
-and vocalizations during sleep.
+vocalizations, and seizure-related rhythmic sounds during sleep.
 """
 
 from __future__ import annotations
@@ -32,6 +32,7 @@ class AudioDetector(BaseDetector):
     - Breathing sounds (rhythmic patterns in 200-800 Hz)
     - Silence periods (potential apnea indicator)
     - Vocalizations (cries, gasps, speech)
+    - Seizure sounds (rhythmic patterns at 1-8 Hz, tonic-clonic)
 
     Event value format:
     {
@@ -40,6 +41,8 @@ class AudioDetector(BaseDetector):
         "breathing_amplitude": float,     # 0-1
         "silence_duration": float,        # seconds
         "vocalization_detected": bool,
+        "seizure_detected": bool,
+        "seizure_confidence": float,      # 0-1
     }
     """
 
@@ -177,6 +180,8 @@ class AudioDetector(BaseDetector):
                         "breathing_amplitude": 0.0,
                         "silence_duration": 0.0,
                         "vocalization_detected": False,
+                        "seizure_detected": False,
+                        "seizure_confidence": 0.0,
                         "error": "No audio input",
                     },
                 )
@@ -200,8 +205,17 @@ class AudioDetector(BaseDetector):
         elif analysis.vocalization_detected:
             state = EventState.WARNING
 
-        # Confidence based on breathing detection
-        confidence = analysis.breathing_confidence if analysis.breathing_detected else 0.5
+        # Seizure detection is highest priority alert
+        if analysis.seizure_detected:
+            state = EventState.ALERT
+
+        # Confidence based on breathing detection (or seizure if detected)
+        if analysis.seizure_detected:
+            confidence = analysis.seizure_confidence
+        elif analysis.breathing_detected:
+            confidence = analysis.breathing_confidence
+        else:
+            confidence = 0.5
 
         await self._emit_event(
             state=state,
@@ -212,6 +226,8 @@ class AudioDetector(BaseDetector):
                 "breathing_amplitude": round(analysis.breathing_amplitude, 2),
                 "silence_duration": round(analysis.silence_duration, 1),
                 "vocalization_detected": analysis.vocalization_detected,
+                "seizure_detected": analysis.seizure_detected,
+                "seizure_confidence": round(analysis.seizure_confidence, 2),
             },
         )
 
@@ -280,6 +296,8 @@ class AudioDetector(BaseDetector):
                 "breathing_detected": self._last_analysis.breathing_detected,
                 "breathing_rate": self._last_analysis.breathing_rate,
                 "silence_duration": self._last_analysis.silence_duration,
+                "seizure_detected": self._last_analysis.seizure_detected,
+                "seizure_confidence": self._last_analysis.seizure_confidence,
             } if self._last_analysis else None,
         }
 
@@ -319,6 +337,8 @@ class MockAudioDetector(BaseDetector):
         self._silence_start: float | None = None
         self._silence_duration = 0.0
         self._inject_vocalization = False
+        self._inject_seizure = False
+        self._seizure_start: float | None = None
 
         # Simulated state
         self._breathing_phase = 0.0
@@ -359,6 +379,8 @@ class MockAudioDetector(BaseDetector):
             silence_duration = 0.0
             breathing_detected = True
             vocalization = False
+            seizure_detected = False
+            seizure_confidence = 0.0
 
             if self._inject_silence:
                 if self._silence_start is None:
@@ -373,6 +395,15 @@ class MockAudioDetector(BaseDetector):
                 vocalization = True
                 self._inject_vocalization = False  # One-shot
 
+            if self._inject_seizure:
+                if self._seizure_start is None:
+                    self._seizure_start = timestamp
+                seizure_duration = timestamp - self._seizure_start
+                # Seizure detection requires minimum duration
+                if seizure_duration >= 3.0:
+                    seizure_detected = True
+                    seizure_confidence = min(0.95, 0.5 + seizure_duration * 0.05)
+
             # Determine state
             state = EventState.NORMAL
             if silence_duration > 5.0:
@@ -381,16 +412,20 @@ class MockAudioDetector(BaseDetector):
                 state = EventState.ALERT
             if vocalization:
                 state = EventState.WARNING
+            if seizure_detected:
+                state = EventState.ALERT
 
             await self._emit_event(
                 state=state,
-                confidence=0.85 if breathing_detected else 0.5,
+                confidence=seizure_confidence if seizure_detected else (0.85 if breathing_detected else 0.5),
                 value={
                     "breathing_detected": breathing_detected,
                     "breathing_rate": round(breathing_rate, 1) if breathing_detected else None,
                     "breathing_amplitude": round(breathing_amplitude, 2),
                     "silence_duration": round(silence_duration, 1),
                     "vocalization_detected": vocalization,
+                    "seizure_detected": seizure_detected,
+                    "seizure_confidence": round(seizure_confidence, 2),
                 },
             )
 
@@ -412,6 +447,7 @@ class MockAudioDetector(BaseDetector):
             "mock": True,
             "base_breathing_rate": self._base_breathing_rate,
             "inject_silence": self._inject_silence,
+            "inject_seizure": self._inject_seizure,
         }
 
     def inject_silence(self, enable: bool = True) -> None:
@@ -428,3 +464,14 @@ class MockAudioDetector(BaseDetector):
     def inject_vocalization(self) -> None:
         """Inject a single vocalization event."""
         self._inject_vocalization = True
+
+    def inject_seizure(self, enable: bool = True) -> None:
+        """
+        Inject seizure sound anomaly.
+
+        Args:
+            enable: True to start seizure sounds, False to end
+        """
+        self._inject_seizure = enable
+        if not enable:
+            self._seizure_start = None

@@ -15,7 +15,8 @@
       "Bash(docker logs:*)",
       "Bash(curl:*)",
       "Bash(docker exec:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "WebFetch(domain:github.com)"
     ]
   }
 }

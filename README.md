@@ -172,28 +172,39 @@ python -m nightwatch --mock-sensors
 cd dashboard-ui && npm run dev
 ```
 
-### Docker Development
+### Local Development
 
-The easiest way to run everything locally:
+Run the dashboard locally for instant hot-reload while backend services run in Docker:
 
 ```bash
-# First time setup:
-docker compose up -d convex      # Start Convex database
-./scripts/deploy-convex.sh       # Deploy Convex functions (one-time)
-docker compose up                # Start all services
+# Terminal 1: Start backend services
+docker compose up -d convex        # Start Convex database
+./scripts/deploy-convex.sh         # Deploy Convex functions (first time only)
+docker compose up backend          # Start Python backend with mock sensors
 
-# For hot-reload development:
-docker compose watch
-
-# After `docker compose down -v` (volume reset):
-./scripts/deploy-convex.sh       # Re-deploy Convex functions
+# Terminal 2: Start dashboard with hot-reload
+cd dashboard-ui
+npm install                        # First time only
+npm run dev                        # Next.js dev server
 ```
 
 **Services:**
+- Dashboard: http://localhost:3000 (Next.js with hot-reload)
 - Backend: http://localhost:8000 (Python API + mock sensors)
-- Dashboard: http://localhost:3000 (Next.js UI)
 - Convex: http://localhost:3210 (real-time database)
 - Simulator: http://localhost:8000/sim (trigger test scenarios)
+
+### Production / Raspberry Pi
+
+Build and run all services in Docker (for deployment):
+
+```bash
+docker compose up -d convex
+./scripts/deploy-convex.sh
+docker compose --profile prod up
+```
+
+This builds optimized production images suitable for Raspberry Pi deployment.
 
 ### Convex Self-Hosted Setup
 
