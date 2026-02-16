@@ -15,11 +15,13 @@ Nightwatch monitors a sleeping child for signs of seizure activity using multipl
 
 ## Sensors
 
-| Sensor | Detects | Hardware |
-|--------|---------|----------|
-| **Radar** | Respiration rate, movement | HLK-LD2450 (24GHz mmWave) |
-| **Audio** | Breathing sounds, vocalizations | USB microphone |
-| **BCG** | Heart rate, bed occupancy | Piezo sensor under mattress |
+| Sensor | Detects | Hardware | Status |
+|--------|---------|----------|--------|
+| **Radar** | Respiration rate, movement, presence | HLK-LD2450 (24GHz mmWave) | Testing soon |
+| **Audio** | Breathing sounds, seizure sounds, silence | Lavalier / USB microphone | Testing soon |
+| **Capacitive** | Heart rate, respiration, bed occupancy | FDC1004 + electrode | Planned |
+
+See [docs/SENSORS.md](docs/SENSORS.md) for detailed sensor documentation and [docs/FUSION.md](docs/FUSION.md) for how signals combine.
 
 ## Quick Start
 
@@ -60,11 +62,14 @@ Open **http://localhost:3000** for the web dashboard.
 ```
 nightwatch/
 ├── nightwatch/           # Python backend
-│   ├── core/             # Event system, config, alert engine
-│   ├── detectors/        # Sensor modules (radar, audio, bcg)
+│   ├── core/             # Event system, config, alert engine, fusion
+│   ├── detectors/        # Sensor modules (radar, audio, capacitive)
 │   ├── dashboard/        # Built-in web server
 │   └── bridge/           # Convex integration
 ├── dashboard-ui/         # Next.js dashboard
+├── docs/                 # Documentation
+│   ├── SENSORS.md        # Sensor details, pinouts, build guides
+│   └── FUSION.md         # Signal fusion architecture
 ├── hardware/             # Hardware docs & 3D prints
 │   ├── SHOPPING_LIST.md  # Parts to buy
 │   ├── SENSOR_SPECS.md   # Technical specs
@@ -77,33 +82,40 @@ nightwatch/
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                      Raspberry Pi                            │
-│                                                              │
-│  ┌─────────┐  ┌─────────┐  ┌─────────┐                      │
-│  │  Radar  │  │  Audio  │  │   BCG   │   Detectors          │
-│  └────┬────┘  └────┬────┘  └────┬────┘                      │
-│       │            │            │                            │
-│       └────────────┼────────────┘                            │
-│                    ▼                                         │
-│            ┌──────────────┐                                  │
-│            │  Event Bus   │   ZeroMQ pub/sub                 │
-│            └──────┬───────┘                                  │
-│                   │                                          │
-│       ┌───────────┼───────────┐                              │
-│       ▼           ▼           ▼                              │
-│  ┌─────────┐ ┌─────────┐ ┌─────────┐                        │
-│  │  Alert  │ │Dashboard│ │ Convex  │                        │
-│  │ Engine  │ │ Server  │ │ Bridge  │                        │
-│  └────┬────┘ └─────────┘ └────┬────┘                        │
-│       │                       │                              │
-│       ▼                       ▼                              │
-│  ┌─────────┐           ┌───────────┐                        │
-│  │ Speaker │           │  Next.js  │                        │
-│  │  Alarm  │           │ Dashboard │                        │
-│  └─────────┘           └───────────┘                        │
-│                                                              │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                        Raspberry Pi                               │
+│                                                                   │
+│  ┌──────────┐  ┌──────────┐  ┌────────────┐                      │
+│  │  Radar   │  │  Audio   │  │ Capacitive │   Detectors          │
+│  │ (LD2450) │  │(Lavalier)│  │ (FDC1004)  │                      │
+│  └────┬─────┘  └────┬─────┘  └─────┬──────┘                      │
+│       │             │              │                              │
+│       └─────────────┼──────────────┘                              │
+│                     ▼                                             │
+│             ┌──────────────┐                                      │
+│             │  Event Bus   │   ZeroMQ pub/sub                     │
+│             └──────┬───────┘                                      │
+│                    │                                              │
+│        ┌───────────┼───────────┐                                  │
+│        ▼           ▼           ▼                                  │
+│   ┌─────────┐ ┌─────────┐ ┌─────────┐                            │
+│   │ Fusion  │ │Dashboard│ │ Convex  │                            │
+│   │ Engine  │ │ Server  │ │ Bridge  │                            │
+│   └────┬────┘ └─────────┘ └────┬────┘                            │
+│        │                       │                                  │
+│        ▼                       ▼                                  │
+│   ┌─────────┐            ┌───────────┐                           │
+│   │  Alert  │            │  Next.js  │                           │
+│   │ Engine  │            │ Dashboard │                           │
+│   └────┬────┘            └───────────┘                           │
+│        │                                                          │
+│        ▼                                                          │
+│   ┌─────────┐                                                     │
+│   │ Speaker │                                                     │
+│   │  Alarm  │                                                     │
+│   └─────────┘                                                     │
+│                                                                   │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 ## Configuration
@@ -239,14 +251,22 @@ CONVEX_SELF_HOSTED_ADMIN_KEY=convex-self-hosted|<your-key>
 
 ## Roadmap
 
-- [x] Radar respiration detection
-- [x] Audio breathing detection
-- [x] BCG heart rate detection
-- [x] Alert engine with rules
+**Software (implemented):**
+- [x] Radar detector (respiration, movement, presence)
+- [x] Audio detector (breathing, seizure sounds, silence)
+- [x] Alert engine with configurable rules
 - [x] Web dashboard
+- [x] Sensor fusion architecture (documented)
+
+**Hardware (in progress):**
+- [ ] Radar hardware testing (LD2450 arriving)
+- [ ] Audio hardware testing (lavalier mic arriving)
+- [ ] Capacitive sensor prototype (FDC1004 + foil electrode)
+
+**Future:**
+- [ ] Fusion engine implementation
 - [ ] Push notifications (Pushover/Ntfy)
-- [ ] Setup wizard (WiFi captive portal)
-- [ ] Recording/playback for debugging
+- [ ] Thermal camera integration (MLX90640)
 - [ ] ML-based seizure pattern detection
 
 ## Safety Notice

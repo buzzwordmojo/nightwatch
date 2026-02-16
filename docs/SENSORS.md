@@ -253,18 +253,81 @@ The sensor creates an electric field that projects through the mattress. Body mo
    Wire routes to Pi
    ```
 
+#### FDC1004 Pinout (10 pins)
+
+From the TI datasheet (SNOSCY5C):
+
+| Pin | Name | Type | Description |
+|-----|------|------|-------------|
+| 1 | SHLD1 | Analog | Active shield output #1 |
+| 2 | CIN1 | Analog | Capacitance input 1 |
+| 3 | CIN2 | Analog | Capacitance input 2 |
+| 4 | CIN3 | Analog | Capacitance input 3 |
+| 5 | CIN4 | Analog | Capacitance input 4 |
+| 6 | SHLD2 | Analog | Active shield output #2 |
+| 7 | GND | Ground | Ground |
+| 8 | VDD | Power | 3.3V supply |
+| 9 | SCL | Input | I2C clock |
+| 10 | SDA | I/O | I2C data |
+| - | DAP | Ground | Die attach pad (connect to GND) |
+
+**Note**: Two shield outputs (SHLD1, SHLD2) allow independent shielding for different electrode zones.
+
 #### FDC1004 Wiring
 
 ```
-FDC1004 Breakout          Raspberry Pi
-─────────────────         ─────────────
-VIN  ──────────────────── 3.3V (Pin 1)
-GND  ──────────────────── GND (Pin 6)
-SDA  ──────────────────── SDA (Pin 3 / GPIO 2)
-SCL  ──────────────────── SCL (Pin 5 / GPIO 3)
+FDC1004                   Raspberry Pi         Electrodes
+───────                   ────────────         ──────────
+VDD (pin 8)  ──────────── 3.3V (pin 1)
+GND (pin 7)  ──────────── GND (pin 6)
+SDA (pin 10) ──────────── GPIO 2 (pin 3)
+SCL (pin 9)  ──────────── GPIO 3 (pin 5)
 
-CIN1 ──────────────────── Electrode wire
+CIN1 (pin 2) ─────────────────────────────────  Sensing electrode
+SHLD1 (pin 1) ────────────────────────────────  Shield plane (behind sensing)
+
+CIN2-4       ──────────── leave unconnected (for single-electrode prototype)
+SHLD2        ──────────── leave unconnected (or tie to SHLD1)
+DAP          ──────────── GND (if accessible on breakout)
 ```
+
+#### Electrode Design Options
+
+**Option A: Aluminum Foil Plate (Recommended for prototype)**
+- Maximum surface area = strongest signal
+- Easy to make, zero cost
+- Use alligator clip or tape wire connection
+
+**Option B: Copper Tape**
+- Can be soldered
+- Good surface area
+- Available at hardware stores
+
+**Option C: Wire Coil/Serpentine Pattern**
+- Easier to solder than foil
+- Must be densely wound to approximate plate area
+- Keep wire spacing <1-2cm for field to "fill in"
+
+```
+Wire serpentine pattern (approximates a plate):
+
+    ╭──────────────────────────────╮
+    │  ╭────────────────────────╮  │
+    ╰──╯  ╭──────────────────╮  ╰──╯
+    ╭─────╯  ╭────────────╮  ╰─────╮
+    │  ╭─────╯            ╰─────╮  │
+    ╰──╯                        ╰──╯
+```
+
+**Trade-offs**:
+
+| Electrode Type | Signal Strength | Ease of Build | Solderable |
+|----------------|-----------------|---------------|------------|
+| Foil plate | Best | Easy | No (clip/tape) |
+| Copper tape | Good | Easy | Yes |
+| Wire coil | Lower | Medium | Yes |
+
+**Recommendation**: Start with foil to validate signal, then switch to copper tape or wire if you need something more permanent.
 
 #### Software Integration
 
@@ -476,38 +539,12 @@ Blood flow causes subtle color changes in skin (visible and near-IR spectrum). T
 
 ### Capacitive Sensing (Under-Mattress)
 
-**Purpose**: Alternative to piezo BCG with potentially higher sensitivity
-
-#### How It Works
-
-Electric field sensing detects body proximity and micro-movements. Electrode plates under mattress sense capacitance changes from body movement.
-
-#### Hardware
-
-Custom PCB with electrode plates, similar placement to BCG piezo sensor.
-- **Components**: ~$30 DIY
-- **Interface**: ADC via SPI (same as BCG)
-
-#### Detectable Signals
-
-| Signal | Accuracy Potential |
-|--------|-------------------|
-| Heart Rate | Comparable to BCG |
-| Respiration | Good |
-| Presence/Position | High |
-
-#### Pros/Cons
-
-**Pros**:
-- Non-contact (under mattress acceptable)
-- Very sensitive to micro-movements
-- No line-of-sight needed
-- May be more sensitive than piezo in some cases
-
-**Cons**:
-- Requires custom PCB build
-- EMI sensitive
-- Similar limitations to BCG (movement disrupts HR)
+> **Note**: Capacitive sensing has been selected as the primary pulse solution.
+> See the detailed **Capacitive Detector (FDC1004)** section above for full documentation including:
+> - FDC1004 pinout and wiring
+> - Electrode design options (foil, copper tape, wire coil)
+> - Prototype build instructions
+> - Expected performance
 
 ---
 
@@ -645,29 +682,29 @@ Audio detector identifies seizure sounds (rhythmic patterns at 1.5-8 Hz). This m
 - Position variance frequency spectrum
 - Movement duration and pattern
 
-#### BCG-Based Seizure Detection
+#### Capacitive-Based Seizure Detection
 
-**Method**: Analyze pressure patterns for rhythmic body movements
+**Method**: Analyze capacitance patterns for rhythmic body movements
 
 **Algorithm concept**:
-1. Monitor raw pressure signal for high-amplitude oscillations
+1. Monitor capacitance signal for high-amplitude oscillations
 2. Detect sustained rhythmic patterns (>5 seconds)
 3. Distinguish from normal movement (non-periodic)
 
 **Advantages**:
-- Already have hardware in place
+- Planned hardware (FDC1004) already supports this
 - Bed-wide detection (whole body)
 - Works in darkness
 
 ### Multi-Sensor Seizure Fusion
 
-**Ideal approach**: Combine audio + radar + BCG for robust seizure detection
+**Ideal approach**: Combine audio + radar + capacitive for robust seizure detection
 
-| Indicator | Audio | Radar | BCG |
-|-----------|:-----:|:-----:|:---:|
+| Indicator | Audio | Radar | Capacitive |
+|-----------|:-----:|:-----:|:----------:|
 | Rhythmic sounds | Yes | - | - |
 | Rhythmic position change | - | Yes | - |
-| Rhythmic pressure pattern | - | - | Yes |
+| Rhythmic capacitance pattern | - | - | Yes |
 | Sustained duration | Yes | Yes | Yes |
 
 **Fusion rule**: Any 2 of 3 indicators = high confidence seizure alert
@@ -757,9 +794,9 @@ See `docs/FUSION.md` for complete fusion layer documentation.
 |-----------|-------|-----------|-------|
 | Single-board computer | Raspberry Pi 4/5 | - | $35-80 |
 | Radar module | HLK-LD2450 | UART | $15-25 |
-| Microphone | USB mic | USB | $10-50 |
-| Piezo sensor | Various | SPI (via MCP3008) | $10-30 |
-| ADC | MCP3008 | SPI | $5 |
+| Microphone | Lavalier / USB mic | USB | $10-50 |
+| Capacitive sensor | FDC1004 | I2C | $12-15 |
+| Electrode | Aluminum foil / copper tape | Wire | $0-10 |
 
 ### Expansion Options
 
@@ -769,6 +806,41 @@ See `docs/FUSION.md` for complete fusion layer documentation.
 | Pi NoIR Camera | rPPG | CSI | $25 |
 | FLIR Lepton | High-res thermal | SPI | $200+ |
 | BME280 | Environment sensing | I2C | $5 |
+
+---
+
+## DIY Research Resources
+
+### Search Terms for YouTube/Google
+
+**Capacitive vital signs sensing:**
+- `FDC1004 heart rate sensor DIY`
+- `FDC1004 heartbeat detection`
+- `capacitive BCG sensor Arduino`
+- `capacitive bed sensor vital signs raspberry pi`
+- `non-contact heart rate bed sensor`
+
+**Ballistocardiography (related technique):**
+- `ballistocardiography DIY`
+- `BCG sensor under mattress Arduino`
+- `sleep monitor heart rate DIY`
+
+**Academic/deeper research:**
+- `capacitive coupled ECG` (cECG)
+- `cECG bed sensor`
+- `unobtrusive heart rate monitoring`
+
+**Radar vital signs:**
+- `FMCW radar vital signs`
+- `LD2450 respiration detection`
+- `mmWave radar heart rate`
+
+### Relevant Projects & Papers
+
+- TI FDC1004 datasheet (SNOSCY5C) - Official reference
+- "Unobtrusive Heart Rate Monitoring Using Capacitive Sensors" - IEEE papers
+- Emfit QS teardowns - Commercial under-mattress sensor analysis
+- OpenBCI community - DIY biosensing projects
 
 ---
 
