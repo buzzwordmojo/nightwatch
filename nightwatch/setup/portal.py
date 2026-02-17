@@ -571,3 +571,108 @@ class CaptivePortal:
         if asyncio.iscoroutine(coro_or_result):
             return await coro_or_result
         return coro_or_result
+
+
+# =============================================================================
+# Development / Testing Entry Point
+# =============================================================================
+
+
+def main():
+    """Run the captive portal in development mode.
+
+    Usage:
+        python -m nightwatch.setup.portal [--port PORT] [--dev]
+
+    In dev mode:
+        - Runs on localhost:8080 (not port 80 which requires root)
+        - WiFi scan returns mock data
+        - WiFi save skips wpa_supplicant (saves to temp file)
+        - No hotspot required
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        prog="nightwatch.setup.portal",
+        description="Captive portal server for Nightwatch setup",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8080,
+        help="Port to run on (default: 8080)",
+    )
+    parser.add_argument(
+        "--host",
+        type=str,
+        default="0.0.0.0",
+        help="Host to bind to (default: 0.0.0.0)",
+    )
+    parser.add_argument(
+        "--dev",
+        action="store_true",
+        help="Development mode - use mock data, skip hardware",
+    )
+
+    args = parser.parse_args()
+
+    # In dev mode, override save to use temp directory
+    dev_mode = args.dev
+
+    if dev_mode:
+        import tempfile
+        temp_dir = Path(tempfile.mkdtemp(prefix="nightwatch-"))
+        print(f"📁 Dev mode: config will be saved to {temp_dir}")
+
+    async def on_wifi_configured(ssid: str):
+        print(f"✅ WiFi configured: {ssid}")
+        if dev_mode:
+            print(f"   (dev mode - not actually connecting)")
+
+    portal = CaptivePortal(
+        host=args.host,
+        port=args.port,
+        gateway_ip="127.0.0.1",  # localhost for dev
+        on_wifi_configured=on_wifi_configured,
+    )
+
+    # In dev mode, patch the save function to use temp directory
+    if dev_mode:
+        original_save = portal._save_wifi_credentials
+
+        async def mock_save(credentials: WiFiCredentials) -> None:
+            config_file = temp_dir / "wifi.conf"
+            config_file.write_text(f"ssid={credentials.ssid}\npassword={credentials.password}\n")
+            print(f"📝 Saved credentials to {config_file}")
+
+        portal._save_wifi_credentials = mock_save
+
+    print("=" * 50)
+    print("🌙 Nightwatch Captive Portal")
+    print("=" * 50)
+    print(f"  Mode: {'Development' if dev_mode else 'Production'}")
+    print(f"  URL:  http://{args.host}:{args.port}/setup")
+    print()
+    print("Press Ctrl+C to stop")
+    print()
+
+    async def run():
+        await portal.start()
+
+        # Keep running until interrupted
+        try:
+            while True:
+                await asyncio.sleep(1)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            await portal.stop()
+
+    try:
+        asyncio.run(run())
+    except KeyboardInterrupt:
+        print("\n👋 Stopped")
+
+
+if __name__ == "__main__":
+    main()

@@ -25,6 +25,104 @@ from nightwatch.detectors.audio.detector import MockAudioDetector
 from nightwatch.detectors.bcg.detector import MockBCGDetector
 from nightwatch.dashboard.server import DashboardServer
 from nightwatch.bridge.convex import ConvexBridge, ConvexEventHandler
+from nightwatch.setup.portal import CaptivePortal
+from nightwatch.setup.first_boot import detect_setup_state, SetupState
+
+
+async def run_setup_portal(
+    config: Config,
+    dev_mode: bool = False,
+    setup_only: bool = False,
+) -> None:
+    """Run the setup portal for initial device configuration.
+
+    Args:
+        config: Nightwatch configuration
+        dev_mode: If True, use mock WiFi data and skip hardware
+        setup_only: If True, exit after setup completes (don't start monitoring)
+    """
+    print(f"🌙 Nightwatch Setup v{__version__}")
+    print("=" * 40)
+
+    if dev_mode:
+        print("📁 Development mode: using mock WiFi data")
+
+    # Check current state
+    state = detect_setup_state()
+    print(f"📊 Current state: {state.name}")
+
+    if state == SetupState.FULLY_CONFIGURED and not setup_only:
+        print("✅ Already configured! Starting monitoring...")
+        return
+
+    # Setup completion callback
+    setup_complete = asyncio.Event()
+
+    async def on_wifi_configured(ssid: str):
+        print(f"✅ WiFi configured: {ssid}")
+        if setup_only:
+            setup_complete.set()
+
+    # Create and start portal
+    portal = CaptivePortal(
+        host="0.0.0.0",
+        port=8080 if dev_mode else 80,
+        gateway_ip="127.0.0.1" if dev_mode else "192.168.4.1",
+        dashboard_url=f"http://localhost:{config.dashboard.port}/setup" if dev_mode else "http://nightwatch.local:3000/setup",
+        on_wifi_configured=on_wifi_configured,
+    )
+
+    # In dev mode, patch the save function to use temp directory
+    if dev_mode:
+        import tempfile
+        temp_dir = Path(tempfile.mkdtemp(prefix="nightwatch-"))
+        print(f"📁 Config will be saved to: {temp_dir}")
+
+        async def mock_save(credentials):
+            config_file = temp_dir / "wifi.conf"
+            config_file.write_text(f"ssid={credentials.ssid}\npassword={credentials.password}\n")
+            print(f"📝 Saved credentials to {config_file}")
+
+        portal._save_wifi_credentials = mock_save
+
+    await portal.start()
+
+    port = 8080 if dev_mode else 80
+    print(f"🌐 Setup portal running at http://localhost:{port}/setup")
+    print()
+    print("Press Ctrl+C to stop")
+    print()
+
+    # Handle shutdown
+    shutdown_event = asyncio.Event()
+
+    def signal_handler():
+        print("\n🛑 Shutting down...")
+        shutdown_event.set()
+
+    loop = asyncio.get_event_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, signal_handler)
+
+    # Wait for shutdown or setup completion
+    done, pending = await asyncio.wait(
+        [
+            asyncio.create_task(shutdown_event.wait()),
+            asyncio.create_task(setup_complete.wait()) if setup_only else asyncio.create_task(asyncio.sleep(float('inf'))),
+        ],
+        return_when=asyncio.FIRST_COMPLETED,
+    )
+
+    # Cancel pending tasks
+    for task in pending:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    await portal.stop()
+    print("👋 Setup portal stopped")
 
 
 async def run_nightwatch(
@@ -223,6 +321,16 @@ def main():
         type=str,
         help="Run predefined test scenario",
     )
+    parser.add_argument(
+        "--force-setup",
+        action="store_true",
+        help="Force setup mode (skip state detection, run setup wizard)",
+    )
+    parser.add_argument(
+        "--setup-only",
+        action="store_true",
+        help="Run only the setup portal (no monitoring)",
+    )
 
     args = parser.parse_args()
 
@@ -255,6 +363,19 @@ def main():
         for error in errors:
             print(f"  - {error}")
         sys.exit(1)
+
+    # Check for setup mode
+    force_setup = args.force_setup or os.environ.get("NIGHTWATCH_FORCE_SETUP", "").lower() in ("1", "true", "yes")
+    setup_only = args.setup_only
+
+    if force_setup or setup_only:
+        # Run setup portal instead of monitoring
+        asyncio.run(run_setup_portal(
+            config,
+            dev_mode=mock_sensors,
+            setup_only=setup_only,
+        ))
+        return
 
     # Run
     try:
