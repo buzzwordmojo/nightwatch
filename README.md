@@ -257,6 +257,7 @@ CONVEX_SELF_HOSTED_ADMIN_KEY=convex-self-hosted|<your-key>
 - [x] Alert engine with configurable rules
 - [x] Web dashboard
 - [x] Sensor fusion architecture (documented)
+- [x] Fusion engine (combines signals from multiple sensors)
 
 **Hardware (in progress):**
 - [ ] Radar hardware testing (LD2450 arriving)
@@ -264,7 +265,6 @@ CONVEX_SELF_HOSTED_ADMIN_KEY=convex-self-hosted|<your-key>
 - [ ] Capacitive sensor prototype (FDC1004 + foil electrode)
 
 **Future:**
-- [ ] Fusion engine implementation
 - [ ] Push notifications (Pushover/Ntfy)
 - [ ] Thermal camera integration (MLX90640)
 - [ ] ML-based seizure pattern detection
