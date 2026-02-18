@@ -26,6 +26,7 @@ from nightwatch.detectors.bcg.detector import MockBCGDetector
 from nightwatch.dashboard.server import DashboardServer
 from nightwatch.bridge.convex import ConvexBridge, ConvexEventHandler
 from nightwatch.setup.portal import CaptivePortal
+from nightwatch.setup.hotspot import HotspotManager
 from nightwatch.setup.first_boot import detect_setup_state, SetupState
 
 
@@ -35,6 +36,9 @@ async def run_setup_portal(
     setup_only: bool = False,
 ) -> None:
     """Run the setup portal for initial device configuration.
+
+    Starts the captive portal (for WiFi setup), the dashboard server
+    (for /api/setup/* endpoints), and optionally the hotspot (production only).
 
     Args:
         config: Nightwatch configuration
@@ -55,73 +59,126 @@ async def run_setup_portal(
         print("✅ Already configured! Starting monitoring...")
         return
 
-    # Setup completion callback
+    # Track components for cleanup
+    hotspot = None
+    dashboard = None
+    portal = None
+
+    # Setup completion event
     setup_complete = asyncio.Event()
+    wifi_configured = asyncio.Event()
 
     async def on_wifi_configured(ssid: str):
         print(f"✅ WiFi configured: {ssid}")
-        if setup_only:
-            setup_complete.set()
+        # Stop hotspot so device joins the real WiFi network
+        if hotspot and hotspot.is_running:
+            print("📡 Stopping hotspot for WiFi reconnect...")
+            await hotspot.stop()
+            await asyncio.sleep(3)  # Allow time for WiFi reconnect
+        wifi_configured.set()
 
-    # Create and start portal
-    portal = CaptivePortal(
-        host="0.0.0.0",
-        port=9532 if dev_mode else 80,
-        gateway_ip="127.0.0.1" if dev_mode else "192.168.4.1",
-        dashboard_url=f"http://localhost:{config.dashboard.port}/setup" if dev_mode else "http://nightwatch.local:9530/setup",
-        on_wifi_configured=on_wifi_configured,
-    )
+    try:
+        # 1. Start hotspot (production only)
+        if not dev_mode:
+            hotspot = HotspotManager()
+            print("📡 Starting WiFi hotspot...")
+            await hotspot.start()
+            print(f"📡 Hotspot active: {hotspot.ssid}")
 
-    # In dev mode, patch the save function to use temp directory
-    if dev_mode:
-        import tempfile
-        temp_dir = Path(tempfile.mkdtemp(prefix="nightwatch-"))
-        print(f"📁 Config will be saved to: {temp_dir}")
+        # 2. Start dashboard server (always — serves /api/setup/* endpoints)
+        dashboard = DashboardServer(
+            config=config.dashboard,
+            mock_mode=dev_mode,
+        )
+        await dashboard.start()
+        print(f"📊 Dashboard running at http://localhost:{config.dashboard.port}")
 
-        async def mock_save(credentials):
-            config_file = temp_dir / "wifi.conf"
-            config_file.write_text(f"ssid={credentials.ssid}\npassword={credentials.password}\n")
-            print(f"📝 Saved credentials to {config_file}")
+        # 3. Start captive portal
+        portal = CaptivePortal(
+            host="0.0.0.0",
+            port=9532 if dev_mode else 80,
+            gateway_ip="127.0.0.1" if dev_mode else "192.168.4.1",
+            dashboard_url=f"http://localhost:{config.dashboard.port}/setup" if dev_mode else "http://nightwatch.local:9530/setup",
+            on_wifi_configured=on_wifi_configured,
+        )
 
-        portal._save_wifi_credentials = mock_save
+        # In dev mode, patch the save function to use temp directory
+        if dev_mode:
+            import tempfile
+            temp_dir = Path(tempfile.mkdtemp(prefix="nightwatch-"))
+            print(f"📁 Config will be saved to: {temp_dir}")
 
-    await portal.start()
+            async def mock_save(credentials):
+                config_file = temp_dir / "wifi.conf"
+                config_file.write_text(f"ssid={credentials.ssid}\npassword={credentials.password}\n")
+                print(f"📝 Saved credentials to {config_file}")
 
-    port = 9532 if dev_mode else 80
-    print(f"🌐 Setup portal running at http://localhost:{port}/setup")
-    print()
-    print("Press Ctrl+C to stop")
-    print()
+            portal._save_wifi_credentials = mock_save
 
-    # Handle shutdown
-    shutdown_event = asyncio.Event()
+        await portal.start()
 
-    def signal_handler():
-        print("\n🛑 Shutting down...")
-        shutdown_event.set()
+        port = 9532 if dev_mode else 80
+        print(f"🌐 Setup portal running at http://localhost:{port}/setup")
+        print()
+        print("Press Ctrl+C to stop")
+        print()
 
-    loop = asyncio.get_event_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, signal_handler)
+        # Handle shutdown
+        shutdown_event = asyncio.Event()
 
-    # Wait for shutdown or setup completion
-    done, pending = await asyncio.wait(
-        [
+        def signal_handler():
+            print("\n🛑 Shutting down...")
+            shutdown_event.set()
+
+        loop = asyncio.get_event_loop()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(sig, signal_handler)
+
+        # 4. Poll for setup completion after WiFi is configured
+        async def poll_setup_completion():
+            """Wait for WiFi, then poll detect_setup_state until FULLY_CONFIGURED."""
+            await wifi_configured.wait()
+            print("⏳ Waiting for setup completion...")
+            while True:
+                state = detect_setup_state()
+                if state == SetupState.FULLY_CONFIGURED:
+                    print("✅ Setup complete!")
+                    setup_complete.set()
+                    return
+                await asyncio.sleep(2)
+
+        poll_task = asyncio.create_task(poll_setup_completion())
+
+        # Wait for shutdown or setup completion
+        wait_tasks = [
             asyncio.create_task(shutdown_event.wait()),
-            asyncio.create_task(setup_complete.wait()) if setup_only else asyncio.create_task(asyncio.sleep(float('inf'))),
-        ],
-        return_when=asyncio.FIRST_COMPLETED,
-    )
+            asyncio.create_task(setup_complete.wait()),
+        ]
 
-    # Cancel pending tasks
-    for task in pending:
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+        done, pending = await asyncio.wait(
+            wait_tasks,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
 
-    await portal.stop()
+        # Cancel pending tasks
+        poll_task.cancel()
+        for task in pending:
+            task.cancel()
+        for task in [poll_task, *pending]:
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+    finally:
+        # Cleanup all components
+        if portal:
+            await portal.stop()
+        if dashboard:
+            await dashboard.stop()
+        if hotspot and hotspot.is_running:
+            await hotspot.stop()
+
     print("👋 Setup portal stopped")
 
 
@@ -134,6 +191,18 @@ async def run_nightwatch(
     """Run the Nightwatch monitoring system."""
     print(f"🌙 Starting Nightwatch v{__version__}")
     print("=" * 40)
+
+    # Auto-detect setup state — run setup if not fully configured
+    state = detect_setup_state()
+    if state != SetupState.FULLY_CONFIGURED:
+        print(f"📊 Setup state: {state.name} — entering setup mode")
+        await run_setup_portal(config, dev_mode=mock_sensors)
+        # Re-check after setup returns
+        state = detect_setup_state()
+        if state != SetupState.FULLY_CONFIGURED:
+            print("❌ Setup not completed. Exiting.")
+            return
+        print("✅ Setup complete, starting monitoring...")
 
     # Create event bus
     event_bus = EventBus(

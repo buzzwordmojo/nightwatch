@@ -22,7 +22,8 @@ WatchdogSec=60
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/nightwatch /var/log/nightwatch
+ReadWritePaths=/var/lib/nightwatch /var/log/nightwatch /etc/nightwatch
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
 PrivateTmp=true
 
 [Install]

@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import tempfile
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -24,6 +24,7 @@ from nightwatch.setup.first_boot import (
     reset_configuration,
 )
 from nightwatch.setup.portal import CaptivePortal
+from nightwatch.dashboard.server import DashboardServer
 
 
 @pytest.fixture
@@ -39,6 +40,21 @@ def portal(temp_config_dir: Path):
     return CaptivePortal(
         gateway_ip="192.168.4.1",
     )
+
+
+@pytest.fixture
+def dashboard(temp_config_dir: Path):
+    """Create a DashboardServer in mock mode with temp config dir."""
+    server = DashboardServer(mock_mode=True)
+    server._config_dir = temp_config_dir
+    return server
+
+
+@pytest.fixture
+def dashboard_client(dashboard: DashboardServer):
+    """Create a test client for the dashboard server."""
+    from fastapi.testclient import TestClient
+    return TestClient(dashboard._app)
 
 
 class TestFirstBootToSetupMode:
@@ -185,7 +201,7 @@ class TestWiFiConfigurationFlow:
 
 
 class TestSetupWizardFlow:
-    """Test the complete setup wizard flow."""
+    """Test the complete setup wizard flow (via DashboardServer)."""
 
     def test_progress_tracking(self, portal: CaptivePortal):
         """Setup progress should be tracked correctly."""
@@ -200,14 +216,9 @@ class TestSetupWizardFlow:
         assert "step" in data
         assert "total_steps" in data
 
-    @pytest.mark.skip(reason="Endpoint /api/setup/name not yet implemented in CaptivePortal")
-    def test_monitor_name_saved(self, portal: CaptivePortal, temp_config_dir: Path):
+    def test_monitor_name_saved(self, dashboard_client, temp_config_dir: Path):
         """Monitor name should be saved correctly."""
-        from fastapi.testclient import TestClient
-
-        client = TestClient(portal._app)
-
-        response = client.post(
+        response = dashboard_client.post(
             "/api/setup/name",
             json={"name": "Kids Room"},
         )
@@ -215,18 +226,13 @@ class TestSetupWizardFlow:
         assert response.status_code == 200
 
         # Verify name was saved
-        name_file = temp_config_dir / "monitor_name.txt"
-        if name_file.exists():
-            assert name_file.read_text().strip() == "Kids Room"
+        name_file = temp_config_dir / "monitor_name"
+        assert name_file.exists()
+        assert name_file.read_text().strip() == "Kids Room"
 
-    @pytest.mark.skip(reason="Endpoint /api/setup/notifications not yet implemented in CaptivePortal")
-    def test_notification_preferences_saved(self, portal: CaptivePortal):
+    def test_notification_preferences_saved(self, dashboard_client, temp_config_dir: Path):
         """Notification preferences should be saved."""
-        from fastapi.testclient import TestClient
-
-        client = TestClient(portal._app)
-
-        response = client.post(
+        response = dashboard_client.post(
             "/api/setup/notifications",
             json={
                 "audio_alarm": True,
@@ -236,31 +242,25 @@ class TestSetupWizardFlow:
 
         assert response.status_code == 200
 
-    @pytest.mark.skip(reason="Endpoint /api/setup/test-alert and _trigger_test_alert not yet implemented")
-    def test_test_alert_triggers(self, portal: CaptivePortal):
+        import json
+        notifications = json.loads((temp_config_dir / "notifications.json").read_text())
+        assert notifications["audio_alarm"] is True
+        assert notifications["push_notifications"] is False
+
+    def test_test_alert_triggers(self, dashboard_client):
         """Test alert should trigger successfully."""
-        from fastapi.testclient import TestClient
+        response = dashboard_client.post("/api/setup/test-alert")
 
-        client = TestClient(portal._app)
+        assert response.status_code == 200
+        data = response.json()
+        assert data.get("success") is True
 
-        with patch.object(portal, "_trigger_test_alert", new_callable=AsyncMock) as mock_alert:
-            mock_alert.return_value = True
-
-            response = client.post("/api/setup/test-alert")
-
-            assert response.status_code == 200
-            data = response.json()
-            assert data.get("success") is True
-
-    @pytest.mark.skip(reason="Endpoint /api/setup/complete not yet implemented in CaptivePortal")
-    def test_setup_complete_marks_configured(self, portal: CaptivePortal, temp_config_dir: Path):
+    def test_setup_complete_marks_configured(self, dashboard_client, temp_config_dir: Path):
         """Completing setup should mark system as configured."""
-        from fastapi.testclient import TestClient
+        # Need wifi.conf for detect_setup_state to see FULLY_CONFIGURED
+        (temp_config_dir / "wifi.conf").write_text("ssid=TestNet\npassword=pass1234")
 
-        client = TestClient(portal._app)
-
-        # Complete setup
-        response = client.post(
+        response = dashboard_client.post(
             "/api/setup/complete",
             json={
                 "monitorName": "Test Room",
@@ -294,19 +294,23 @@ class TestSetupErrorHandling:
 
         assert response.status_code == 422  # Validation error
 
-    @pytest.mark.skip(reason="Endpoint /api/setup/name not yet implemented in CaptivePortal")
-    def test_empty_monitor_name_rejected(self, portal: CaptivePortal):
+    def test_empty_monitor_name_rejected(self, dashboard_client):
         """Empty monitor name should be rejected."""
-        from fastapi.testclient import TestClient
-
-        client = TestClient(portal._app)
-
-        response = client.post(
+        response = dashboard_client.post(
             "/api/setup/name",
             json={"name": ""},
         )
 
         assert response.status_code == 422  # Validation error
+
+    def test_short_monitor_name_rejected(self, dashboard_client):
+        """Single-char monitor name should be rejected."""
+        response = dashboard_client.post(
+            "/api/setup/name",
+            json={"name": "A"},
+        )
+
+        assert response.status_code == 422
 
     def test_wifi_connection_failure_reported(self, portal: CaptivePortal):
         """WiFi connection failure should be reported clearly."""
@@ -327,49 +331,26 @@ class TestSetupErrorHandling:
 
 
 class TestSensorDetectionDuringSetup:
-    """Test sensor detection during setup wizard."""
+    """Test sensor detection during setup wizard (via DashboardServer)."""
 
-    @pytest.mark.skip(reason="Endpoint /api/setup/sensor-preview and _get_sensor_status not yet implemented")
-    def test_sensor_preview_returns_status(self, portal: CaptivePortal):
+    def test_sensor_preview_returns_status(self, dashboard_client):
         """Sensor preview should return detection status."""
-        from fastapi.testclient import TestClient
+        response = dashboard_client.get("/api/setup/sensor-preview")
 
-        client = TestClient(portal._app)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["radar"]["detected"] is True
+        assert data["radar"]["signal"] == 85
+        assert data["bcg"]["detected"] is False
 
-        with patch.object(portal, "_get_sensor_status", new_callable=AsyncMock) as mock_status:
-            mock_status.return_value = {
-                "radar": {"detected": True, "signal": 85},
-                "audio": {"detected": True},
-                "bcg": {"detected": False},
-            }
+    def test_sensor_preview_shape(self, dashboard_client):
+        """Sensor preview should include all expected sensors."""
+        response = dashboard_client.get("/api/setup/sensor-preview")
 
-            response = client.get("/api/setup/sensor-preview")
-
-            assert response.status_code == 200
-            data = response.json()
-            assert data["radar"]["detected"] is True
-            assert data["bcg"]["detected"] is False
-
-    @pytest.mark.skip(reason="Endpoint /api/setup/sensor-preview and _get_sensor_status not yet implemented")
-    def test_no_sensors_detected_warns_user(self, portal: CaptivePortal):
-        """No sensors detected should warn but not block setup."""
-        from fastapi.testclient import TestClient
-
-        client = TestClient(portal._app)
-
-        with patch.object(portal, "_get_sensor_status", new_callable=AsyncMock) as mock_status:
-            mock_status.return_value = {
-                "radar": {"detected": False},
-                "audio": {"detected": False},
-                "bcg": {"detected": False},
-            }
-
-            response = client.get("/api/setup/sensor-preview")
-
-            assert response.status_code == 200
-            data = response.json()
-            # All sensors should report not detected
-            assert data["radar"]["detected"] is False
+        data = response.json()
+        assert "radar" in data
+        assert "audio" in data
+        assert "bcg" in data
 
 
 class TestSetupResetFlow:
@@ -393,7 +374,7 @@ class TestSetupResetFlow:
         """Factory reset should clear all configuration."""
         # Setup complete config
         (temp_config_dir / "wifi.conf").write_text("ssid=Test\npassword=pass")
-        (temp_config_dir / "monitor_name.txt").write_text("Kids Room")
+        (temp_config_dir / "monitor_name").write_text("Kids Room")
         mark_configured(temp_config_dir)
 
         # Factory reset (remove all files)
@@ -401,3 +382,87 @@ class TestSetupResetFlow:
             f.unlink()
 
         assert detect_setup_state(temp_config_dir) == SetupState.UNCONFIGURED
+
+
+class TestProductionBootPath:
+    """Test that run_nightwatch auto-detects setup state and routes correctly."""
+
+    @pytest.mark.asyncio
+    async def test_unconfigured_triggers_setup(self):
+        """run_nightwatch should call run_setup_portal when unconfigured."""
+        from nightwatch.core.config import Config
+
+        config = Config.default()
+
+        with patch("nightwatch.__main__.detect_setup_state") as mock_detect, \
+             patch("nightwatch.__main__.run_setup_portal", new_callable=AsyncMock) as mock_setup:
+            # First call: UNCONFIGURED (triggers setup)
+            # Second call after setup returns: still UNCONFIGURED (user cancelled)
+            mock_detect.side_effect = [SetupState.UNCONFIGURED, SetupState.UNCONFIGURED]
+
+            from nightwatch.__main__ import run_nightwatch
+            await run_nightwatch(config, mock_sensors=True)
+
+            mock_setup.assert_called_once_with(config, dev_mode=True)
+
+    @pytest.mark.asyncio
+    async def test_configured_skips_setup(self):
+        """run_nightwatch should go straight to monitoring when fully configured."""
+        from nightwatch.core.config import Config
+
+        config = Config.default()
+
+        with patch("nightwatch.__main__.detect_setup_state", return_value=SetupState.FULLY_CONFIGURED), \
+             patch("nightwatch.__main__.run_setup_portal", new_callable=AsyncMock) as mock_setup, \
+             patch("nightwatch.__main__.EventBus") as mock_bus_cls, \
+             patch("nightwatch.__main__.AlertEngine") as mock_engine_cls, \
+             patch("nightwatch.__main__.MockRadarDetector") as mock_radar_cls, \
+             patch("nightwatch.__main__.MockAudioDetector") as mock_audio_cls, \
+             patch("nightwatch.__main__.MockBCGDetector") as mock_bcg_cls, \
+             patch("nightwatch.__main__.DashboardServer") as mock_dash_cls:
+
+            # Wire up mocks so run_nightwatch doesn't crash
+            mock_bus = MagicMock()
+            mock_bus.create_publisher.return_value = MagicMock()
+            mock_bus.close = AsyncMock()
+            mock_bus_cls.return_value = mock_bus
+
+            mock_engine = AsyncMock()
+            mock_engine_cls.return_value = mock_engine
+
+            for mock_cls in [mock_radar_cls, mock_audio_cls, mock_bcg_cls]:
+                det = AsyncMock()
+                det.name = "mock"
+                mock_cls.return_value = det
+
+            mock_dash = AsyncMock()
+            mock_dash_cls.return_value = mock_dash
+
+            # Trigger immediate shutdown via signal
+            original_run = asyncio.Event.wait
+
+            async def immediate_shutdown(self):
+                self.set()
+
+            with patch.object(asyncio.Event, "wait", immediate_shutdown):
+                from nightwatch.__main__ import run_nightwatch
+                await run_nightwatch(config, mock_sensors=True)
+
+            mock_setup.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_wifi_only_triggers_setup(self):
+        """WIFI_ONLY state should also trigger setup."""
+        from nightwatch.core.config import Config
+
+        config = Config.default()
+
+        with patch("nightwatch.__main__.detect_setup_state") as mock_detect, \
+             patch("nightwatch.__main__.run_setup_portal", new_callable=AsyncMock) as mock_setup:
+            # WIFI_ONLY → triggers setup, then still not configured → exits
+            mock_detect.side_effect = [SetupState.WIFI_ONLY, SetupState.WIFI_ONLY]
+
+            from nightwatch.__main__ import run_nightwatch
+            await run_nightwatch(config, mock_sensors=True)
+
+            mock_setup.assert_called_once()

@@ -1,12 +1,18 @@
-"""Tests for captive portal server."""
+"""Tests for captive portal server and dashboard setup endpoints."""
 
 from __future__ import annotations
 
+import json
+import tempfile
+from pathlib import Path
+
 import pytest
-from unittest.mock import patch, AsyncMock
+from unittest.mock import patch, AsyncMock, MagicMock
 from fastapi.testclient import TestClient
 
 from nightwatch.setup.portal import CaptivePortal, WiFiCredentials
+from nightwatch.setup.first_boot import detect_setup_state, SetupState
+from nightwatch.dashboard.server import DashboardServer
 
 
 @pytest.fixture
@@ -211,3 +217,309 @@ class TestCaptivePortalLifecycle:
         await portal.stop()
 
         assert mock_server.should_exit is True
+
+
+# ======================================================================
+# Dashboard Setup Endpoint Tests
+# ======================================================================
+
+
+@pytest.fixture
+def temp_config_dir():
+    """Create temporary config directory for dashboard tests."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        yield Path(tmpdir)
+
+
+@pytest.fixture
+def dashboard(temp_config_dir: Path):
+    """Create a DashboardServer in mock mode with temp config dir."""
+    server = DashboardServer(mock_mode=True)
+    server._config_dir = temp_config_dir
+    return server
+
+
+@pytest.fixture
+def dashboard_client(dashboard: DashboardServer):
+    """Create a test client for the dashboard."""
+    return TestClient(dashboard._app)
+
+
+class TestDashboardSensorPreview:
+    """Test /api/setup/sensor-preview endpoint."""
+
+    def test_returns_expected_shape(self, dashboard_client: TestClient):
+        """Sensor preview should return radar, audio, bcg."""
+        response = dashboard_client.get("/api/setup/sensor-preview")
+        assert response.status_code == 200
+        data = response.json()
+        assert "radar" in data
+        assert "audio" in data
+        assert "bcg" in data
+
+    def test_mock_mode_returns_defaults(self, dashboard_client: TestClient):
+        """Mock mode should return known default values."""
+        data = dashboard_client.get("/api/setup/sensor-preview").json()
+        assert data["radar"]["detected"] is True
+        assert data["radar"]["signal"] == 85
+        assert data["audio"]["detected"] is True
+        assert data["bcg"]["detected"] is False
+
+
+class TestDashboardTestAlert:
+    """Test /api/setup/test-alert endpoint."""
+
+    def test_returns_success(self, dashboard_client: TestClient):
+        """Test alert should return success."""
+        response = dashboard_client.post("/api/setup/test-alert")
+        assert response.status_code == 200
+        assert response.json()["success"] is True
+
+
+class TestDashboardSetupComplete:
+    """Test /api/setup/complete endpoint."""
+
+    def test_creates_configured_flag(self, dashboard_client: TestClient, temp_config_dir: Path):
+        """Complete should create .configured flag."""
+        # Need wifi.conf for FULLY_CONFIGURED state
+        (temp_config_dir / "wifi.conf").write_text("ssid=TestNet\npassword=pass1234")
+
+        response = dashboard_client.post(
+            "/api/setup/complete",
+            json={
+                "monitorName": "Test Room",
+                "sensorsConfirmed": True,
+                "notifications": {"audioAlarm": True},
+                "testCompleted": True,
+            },
+        )
+        assert response.status_code == 200
+        assert (temp_config_dir / ".configured").exists()
+        assert detect_setup_state(temp_config_dir) == SetupState.FULLY_CONFIGURED
+
+    def test_saves_monitor_name(self, dashboard_client: TestClient, temp_config_dir: Path):
+        """Complete should save monitor name."""
+        dashboard_client.post(
+            "/api/setup/complete",
+            json={"monitorName": "Nursery", "sensorsConfirmed": True,
+                  "notifications": {}, "testCompleted": True},
+        )
+        assert (temp_config_dir / "monitor_name").read_text() == "Nursery"
+
+    def test_saves_notifications(self, dashboard_client: TestClient, temp_config_dir: Path):
+        """Complete should save notifications config."""
+        dashboard_client.post(
+            "/api/setup/complete",
+            json={"monitorName": "Room", "sensorsConfirmed": True,
+                  "notifications": {"audioAlarm": True, "pushNotifications": False},
+                  "testCompleted": True},
+        )
+        data = json.loads((temp_config_dir / "notifications.json").read_text())
+        assert data["audioAlarm"] is True
+        assert data["pushNotifications"] is False
+
+    def test_saves_setup_summary(self, dashboard_client: TestClient, temp_config_dir: Path):
+        """Complete should save a setup summary."""
+        dashboard_client.post(
+            "/api/setup/complete",
+            json={"monitorName": "Room", "sensorsConfirmed": True,
+                  "notifications": {}, "testCompleted": True},
+        )
+        summary = json.loads((temp_config_dir / "setup_summary.json").read_text())
+        assert summary["monitorName"] == "Room"
+        assert "completedAt" in summary
+
+
+class TestDashboardSetupName:
+    """Test /api/setup/name endpoint."""
+
+    def test_saves_name(self, dashboard_client: TestClient, temp_config_dir: Path):
+        """Name endpoint should save to monitor_name file."""
+        response = dashboard_client.post(
+            "/api/setup/name",
+            json={"name": "Kids Room"},
+        )
+        assert response.status_code == 200
+        assert (temp_config_dir / "monitor_name").read_text() == "Kids Room"
+
+    def test_rejects_short_name(self, dashboard_client: TestClient):
+        """Name shorter than 2 chars should be rejected."""
+        response = dashboard_client.post(
+            "/api/setup/name",
+            json={"name": "A"},
+        )
+        assert response.status_code == 422
+
+    def test_rejects_empty_name(self, dashboard_client: TestClient):
+        """Empty name should be rejected."""
+        response = dashboard_client.post(
+            "/api/setup/name",
+            json={"name": ""},
+        )
+        assert response.status_code == 422
+
+    def test_strips_whitespace(self, dashboard_client: TestClient, temp_config_dir: Path):
+        """Name should be stripped of whitespace."""
+        dashboard_client.post(
+            "/api/setup/name",
+            json={"name": "  Nursery  "},
+        )
+        assert (temp_config_dir / "monitor_name").read_text() == "Nursery"
+
+
+class TestDashboardSetupNotifications:
+    """Test /api/setup/notifications endpoint."""
+
+    def test_saves_preferences(self, dashboard_client: TestClient, temp_config_dir: Path):
+        """Notifications should be saved to JSON file."""
+        response = dashboard_client.post(
+            "/api/setup/notifications",
+            json={"audio_alarm": True, "push_notifications": False},
+        )
+        assert response.status_code == 200
+
+        data = json.loads((temp_config_dir / "notifications.json").read_text())
+        assert data["audio_alarm"] is True
+        assert data["push_notifications"] is False
+
+
+# ======================================================================
+# Enhanced run_setup_portal Tests
+# ======================================================================
+
+
+class TestSetupPortalHotspot:
+    """Test hotspot management in run_setup_portal."""
+
+    @pytest.mark.asyncio
+    async def test_hotspot_started_in_production(self):
+        """HotspotManager.start() should be called when not in dev mode."""
+        from nightwatch.core.config import Config
+        from nightwatch.__main__ import run_setup_portal
+
+        config = Config.default()
+
+        mock_hotspot = AsyncMock()
+        mock_hotspot.is_running = True
+        mock_hotspot.ssid = "Nightwatch-XXXX"
+
+        with patch("nightwatch.__main__.HotspotManager", return_value=mock_hotspot) as mock_cls, \
+             patch("nightwatch.__main__.DashboardServer") as mock_dash_cls, \
+             patch("nightwatch.__main__.CaptivePortal") as mock_portal_cls, \
+             patch("nightwatch.__main__.detect_setup_state", return_value=SetupState.UNCONFIGURED):
+
+            mock_dash_cls.return_value = AsyncMock()
+            mock_portal_cls.return_value = AsyncMock()
+
+            # Simulate immediate shutdown
+            with patch("asyncio.wait", new_callable=AsyncMock) as mock_wait:
+                mock_wait.return_value = ({MagicMock()}, set())
+
+                try:
+                    await run_setup_portal(config, dev_mode=False, setup_only=True)
+                except Exception:
+                    pass  # May error on signal handling; that's fine
+
+            mock_cls.assert_called_once()
+            mock_hotspot.start.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_hotspot_skipped_in_dev_mode(self):
+        """Hotspot should NOT be started in dev mode."""
+        from nightwatch.core.config import Config
+        from nightwatch.__main__ import run_setup_portal
+
+        config = Config.default()
+
+        with patch("nightwatch.__main__.HotspotManager") as mock_cls, \
+             patch("nightwatch.__main__.DashboardServer") as mock_dash_cls, \
+             patch("nightwatch.__main__.CaptivePortal") as mock_portal_cls, \
+             patch("nightwatch.__main__.detect_setup_state", return_value=SetupState.UNCONFIGURED):
+
+            mock_dash_cls.return_value = AsyncMock()
+            mock_portal_cls.return_value = AsyncMock()
+
+            with patch("asyncio.wait", new_callable=AsyncMock) as mock_wait:
+                mock_wait.return_value = ({MagicMock()}, set())
+
+                try:
+                    await run_setup_portal(config, dev_mode=True, setup_only=True)
+                except Exception:
+                    pass
+
+            mock_cls.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_dashboard_started_during_setup(self):
+        """DashboardServer should be created and started during setup."""
+        from nightwatch.core.config import Config
+        from nightwatch.__main__ import run_setup_portal
+
+        config = Config.default()
+
+        mock_dashboard = AsyncMock()
+
+        with patch("nightwatch.__main__.HotspotManager") as mock_hotspot_cls, \
+             patch("nightwatch.__main__.DashboardServer", return_value=mock_dashboard) as mock_dash_cls, \
+             patch("nightwatch.__main__.CaptivePortal") as mock_portal_cls, \
+             patch("nightwatch.__main__.detect_setup_state", return_value=SetupState.UNCONFIGURED):
+
+            mock_hotspot_cls.return_value = AsyncMock(is_running=False, ssid="test")
+            mock_portal_cls.return_value = AsyncMock()
+
+            with patch("asyncio.wait", new_callable=AsyncMock) as mock_wait:
+                mock_wait.return_value = ({MagicMock()}, set())
+
+                try:
+                    await run_setup_portal(config, dev_mode=True, setup_only=True)
+                except Exception:
+                    pass
+
+            mock_dash_cls.assert_called_once_with(
+                config=config.dashboard,
+                mock_mode=True,
+            )
+            mock_dashboard.start.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_hotspot_stopped_after_wifi(self):
+        """Hotspot should be stopped when WiFi callback fires."""
+        from nightwatch.__main__ import run_setup_portal
+        from nightwatch.core.config import Config
+
+        config = Config.default()
+
+        mock_hotspot = AsyncMock()
+        mock_hotspot.is_running = True
+        mock_hotspot.ssid = "Nightwatch-XXXX"
+
+        captured_callback = None
+
+        def capture_portal_init(**kwargs):
+            nonlocal captured_callback
+            captured_callback = kwargs.get("on_wifi_configured")
+            mock_portal = AsyncMock()
+            return mock_portal
+
+        with patch("nightwatch.__main__.HotspotManager", return_value=mock_hotspot), \
+             patch("nightwatch.__main__.DashboardServer", return_value=AsyncMock()), \
+             patch("nightwatch.__main__.CaptivePortal", side_effect=capture_portal_init), \
+             patch("nightwatch.__main__.detect_setup_state", return_value=SetupState.UNCONFIGURED):
+
+            with patch("asyncio.wait", new_callable=AsyncMock) as mock_wait:
+                mock_wait.return_value = ({MagicMock()}, set())
+
+                try:
+                    await run_setup_portal(config, dev_mode=False, setup_only=True)
+                except Exception:
+                    pass
+
+        # The callback should have been captured from CaptivePortal kwargs
+        assert captured_callback is not None
+
+        # Simulate calling the wifi callback
+        mock_hotspot.reset_mock()
+        with patch("asyncio.sleep", new_callable=AsyncMock):
+            await captured_callback("TestNetwork")
+
+        mock_hotspot.stop.assert_called_once()
