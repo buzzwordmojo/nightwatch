@@ -153,4 +153,4 @@ setup:
   portal:
     host: "0.0.0.0"
     port: 80
-    dashboard_url: "http://localhost:3000/setup"
+    dashboard_url: "http://localhost:9530/setup"

@@ -25,7 +25,7 @@ echo
 case "${1:-}" in
     --portal)
         echo -e "${GREEN}Starting portal-only mode...${NC}"
-        echo "Access at: http://localhost:8080/setup"
+        echo "Access at: http://localhost:9532/setup"
         echo
         cd "$PROJECT_DIR"
         python -m nightwatch.setup.portal --dev
@@ -53,7 +53,7 @@ case "${1:-}" in
         echo "   sudo python -m nightwatch --force-setup --mock-sensors"
         echo
         echo "6. From host, access portal at:"
-        echo "   http://localhost:8080/setup"
+        echo "   http://localhost:9532/setup"
         echo
         ;;
 
@@ -76,12 +76,12 @@ case "${1:-}" in
         echo -e "${GREEN}Running full setup in dev mode...${NC}"
         echo
         echo "This will:"
-        echo "  - Start the captive portal on port 8080"
+        echo "  - Start the captive portal on port 9532"
         echo "  - Use mock WiFi scan data"
         echo "  - Save config to a temp directory"
         echo
         echo "Access the setup wizard at:"
-        echo -e "  ${BLUE}http://localhost:8080/setup${NC}"
+        echo -e "  ${BLUE}http://localhost:9532/setup${NC}"
         echo
 
         cd "$PROJECT_DIR"

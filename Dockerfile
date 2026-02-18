@@ -2,7 +2,7 @@
 # Works on x86_64 (dev) and ARM64 (Raspberry Pi)
 #
 # Build: docker build -t nightwatch .
-# Run:   docker run -p 8000:8000 nightwatch
+# Run:   docker run -p 8000:9531 nightwatch
 
 FROM python:3.11-slim
 
@@ -42,7 +42,7 @@ EXPOSE 8000
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:9531/health')" || exit 1
 
 # Default command - runs with mock sensors for dev
 CMD ["python", "-m", "nightwatch", "--mock-sensors", "--config", "/app/config/docker.yaml"]

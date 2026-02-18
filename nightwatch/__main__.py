@@ -66,9 +66,9 @@ async def run_setup_portal(
     # Create and start portal
     portal = CaptivePortal(
         host="0.0.0.0",
-        port=8080 if dev_mode else 80,
+        port=9532 if dev_mode else 80,
         gateway_ip="127.0.0.1" if dev_mode else "192.168.4.1",
-        dashboard_url=f"http://localhost:{config.dashboard.port}/setup" if dev_mode else "http://nightwatch.local:3000/setup",
+        dashboard_url=f"http://localhost:{config.dashboard.port}/setup" if dev_mode else "http://nightwatch.local:9530/setup",
         on_wifi_configured=on_wifi_configured,
     )
 
@@ -87,7 +87,7 @@ async def run_setup_portal(
 
     await portal.start()
 
-    port = 8080 if dev_mode else 80
+    port = 9532 if dev_mode else 80
     print(f"🌐 Setup portal running at http://localhost:{port}/setup")
     print()
     print("Press Ctrl+C to stop")

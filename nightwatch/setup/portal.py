@@ -62,7 +62,7 @@ class CaptivePortal:
     host: str = "0.0.0.0"
     port: int = 80
     gateway_ip: str = "192.168.4.1"
-    dashboard_url: str = "http://nightwatch.local:3000/setup"
+    dashboard_url: str = "http://nightwatch.local:9530/setup"
     on_wifi_configured: Any | None = None  # Callback when WiFi is set
 
     _app: FastAPI = field(default=None, init=False)  # type: ignore
@@ -585,7 +585,7 @@ def main():
         python -m nightwatch.setup.portal [--port PORT] [--dev]
 
     In dev mode:
-        - Runs on localhost:8080 (not port 80 which requires root)
+        - Runs on localhost:9532 (not port 80 which requires root)
         - WiFi scan returns mock data
         - WiFi save skips wpa_supplicant (saves to temp file)
         - No hotspot required
@@ -599,8 +599,8 @@ def main():
     parser.add_argument(
         "--port",
         type=int,
-        default=8080,
-        help="Port to run on (default: 8080)",
+        default=9532,
+        help="Port to run on (default: 9532)",
     )
     parser.add_argument(
         "--host",

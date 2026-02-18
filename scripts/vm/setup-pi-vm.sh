@@ -207,7 +207,7 @@ qemu-system-aarch64 \
     -dtb "${SCRIPT_DIR}/bcm2710-rpi-3-b-plus.dtb" \
     -drive "file=${SCRIPT_DIR}/pi-os.img,format=raw,if=sd" \
     -append "root=/dev/mmcblk0p2 rootfstype=ext4 rw rootwait console=ttyAMA0,115200" \
-    -netdev user,id=net0,hostfwd=tcp::2222-:22,hostfwd=tcp::3000-:3000,hostfwd=tcp::8000-:8000,hostfwd=tcp::8080-:80 \
+    -netdev user,id=net0,hostfwd=tcp::9522-:22,hostfwd=tcp::9530-:9530,hostfwd=tcp::9531-:9531,hostfwd=tcp::9532-:80 \
     -device usb-net,netdev=net0 \
     -nographic
 
@@ -243,7 +243,7 @@ qemu-system-aarch64 \
     -smp 4 \
     -bios "${SCRIPT_DIR}/QEMU_EFI.fd" \
     -drive "file=${SCRIPT_DIR}/pi-os.img,format=raw,if=virtio" \
-    -netdev user,id=net0,hostfwd=tcp::2222-:22,hostfwd=tcp::3000-:3000,hostfwd=tcp::8000-:8000,hostfwd=tcp::8080-:80 \
+    -netdev user,id=net0,hostfwd=tcp::9522-:22,hostfwd=tcp::9530-:9530,hostfwd=tcp::9531-:9531,hostfwd=tcp::9532-:80 \
     -device virtio-net-pci,netdev=net0 \
     -nographic
 
@@ -340,10 +340,10 @@ print_summary() {
     echo "  3. Run tests:   ./bin/vm test"
     echo ""
     echo "Port Forwarding:"
-    echo "  localhost:2222  -> VM SSH"
-    echo "  localhost:3000  -> Dashboard UI"
-    echo "  localhost:8000  -> API"
-    echo "  localhost:8080  -> Captive Portal"
+    echo "  localhost:9522  -> VM SSH"
+    echo "  localhost:9530  -> Dashboard UI"
+    echo "  localhost:9531  -> API"
+    echo "  localhost:9532  -> Captive Portal"
     echo ""
     echo "Default Credentials:"
     echo "  User: ${PI_USER}"

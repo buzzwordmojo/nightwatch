@@ -37,7 +37,7 @@ services:
   backend:
     build: .
     ports:
-      - "8000:8000"
+      - "8000:9531"
     volumes:
       - ./nightwatch:/app/nightwatch:ro
       - ./config:/app/config:ro
@@ -51,7 +51,7 @@ services:
     depends_on:
       - convex
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9531/health')"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -71,12 +71,12 @@ services:
     build:
       context: ./dashboard-ui
       args:
-        - NEXT_PUBLIC_API_URL=http://localhost:8000
+        - NEXT_PUBLIC_API_URL=http://localhost:9531
         - NEXT_PUBLIC_CONVEX_URL=http://localhost:3210
     ports:
-      - "3000:3000"
+      - "3000:9530"
     environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - NEXT_PUBLIC_API_URL=http://localhost:9531
       - NEXT_PUBLIC_CONVEX_URL=http://localhost:3210
     depends_on:
       backend:

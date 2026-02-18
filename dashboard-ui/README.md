@@ -40,7 +40,7 @@ The `.env.local` file is already set up for local development:
 
 ```env
 NEXT_PUBLIC_CONVEX_URL=http://localhost:3210
-NEXT_PUBLIC_API_URL=http://localhost:8000
+NEXT_PUBLIC_API_URL=http://localhost:9531
 ```
 
 ### 4. Run Development Server
@@ -49,7 +49,7 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 npm run dev
 ```
 
-Dashboard will be available at: **http://localhost:3000**
+Dashboard will be available at: **http://localhost:9530**
 
 ## Running with Python Backend
 
@@ -128,7 +128,7 @@ dashboard-ui/
 For monitoring while away from home, you can use Tailscale:
 
 1. Install Tailscale on the Pi and your phone
-2. Access dashboard via Tailscale IP: `http://100.x.x.x:3000`
+2. Access dashboard via Tailscale IP: `http://100.x.x.x:9530`
 
 See main project docs for detailed Tailscale setup.
 
