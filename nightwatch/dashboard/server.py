@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,7 @@ import uvicorn
 from nightwatch.core.config import DashboardConfig
 from nightwatch.core.events import Event, Alert, EventBuffer
 from nightwatch.core.engine import AlertEngine, AlertState, AlertLevel
+from nightwatch.setup.first_boot import mark_configured
 
 
 class ConnectionManager:
@@ -77,6 +79,11 @@ class DashboardServer:
         self._engine = engine
         self._detectors = detectors or {}
         self._mock_mode = mock_mode
+        self._config_dir = (
+            Path(tempfile.mkdtemp(prefix="nightwatch-setup-"))
+            if mock_mode
+            else Path("/etc/nightwatch")
+        )
         self._app = FastAPI(
             title="Nightwatch Dashboard",
             description="Epilepsy monitoring system dashboard",
@@ -156,6 +163,13 @@ class DashboardServer:
         self._app.post("/api/sim/movement")(self._set_movement)
         self._app.post("/api/sim/presence")(self._set_presence)
         self._app.post("/api/sim/reset")(self._reset_sim)
+
+        # Setup wizard routes (called by Next.js dashboard /setup pages)
+        self._app.get("/api/setup/sensor-preview")(self._setup_sensor_preview)
+        self._app.post("/api/setup/test-alert")(self._setup_test_alert)
+        self._app.post("/api/setup/complete")(self._setup_complete)
+        self._app.post("/api/setup/name")(self._setup_name)
+        self._app.post("/api/setup/notifications")(self._setup_notifications)
 
     # ========================================================================
     # Health Check
@@ -885,6 +899,98 @@ class DashboardServer:
                 "websocket_update_interval_ms": self._config.websocket_update_interval_ms,
             }
         }
+
+    # ========================================================================
+    # Setup Wizard Endpoints
+    # ========================================================================
+
+    async def _setup_sensor_preview(self) -> dict[str, Any]:
+        """Return sensor detection status for the setup wizard."""
+        if self._mock_mode:
+            return {
+                "radar": {"detected": True, "signal": 85},
+                "audio": {"detected": True},
+                "bcg": {"detected": False},
+            }
+
+        # In production, check actual detectors
+        result = {}
+        for name, detector in self._detectors.items():
+            detected = hasattr(detector, "is_running") and detector.is_running
+            entry: dict[str, Any] = {"detected": detected}
+            if name == "radar" and hasattr(detector, "signal_strength"):
+                entry["signal"] = detector.signal_strength
+            result[name] = entry
+        return result
+
+    async def _setup_test_alert(self) -> dict[str, Any]:
+        """Simulate a test alert during setup."""
+        if self._mock_mode:
+            await asyncio.sleep(2)
+            return {"success": True}
+
+        # In production, trigger real alert through existing logic
+        await self._ws_manager.broadcast({
+            "type": "test_alert",
+            "message": "This is a test alert",
+            "timestamp": time.time(),
+        })
+        return {"success": True}
+
+    async def _setup_complete(self, request: Request) -> dict[str, Any]:
+        """Mark setup as complete and save all config."""
+        body = await request.json()
+
+        self._config_dir.mkdir(parents=True, exist_ok=True)
+
+        # Save monitor name
+        monitor_name = body.get("monitorName", "")
+        if monitor_name:
+            (self._config_dir / "monitor_name").write_text(monitor_name)
+
+        # Save notifications config
+        notifications = body.get("notifications", {})
+        (self._config_dir / "notifications.json").write_text(
+            json.dumps(notifications)
+        )
+
+        # Save setup summary
+        (self._config_dir / "setup_summary.json").write_text(
+            json.dumps({
+                "monitorName": monitor_name,
+                "sensorsConfirmed": body.get("sensorsConfirmed", False),
+                "notifications": notifications,
+                "testCompleted": body.get("testCompleted", False),
+                "completedAt": time.time(),
+            })
+        )
+
+        # Mark as configured
+        mark_configured(self._config_dir)
+
+        return {"success": True}
+
+    async def _setup_name(self, request: Request) -> dict[str, Any]:
+        """Save monitor name."""
+        body = await request.json()
+        name = body.get("name", "").strip()
+
+        if len(name) < 2:
+            raise HTTPException(status_code=422, detail="Name must be at least 2 characters")
+
+        self._config_dir.mkdir(parents=True, exist_ok=True)
+        (self._config_dir / "monitor_name").write_text(name)
+
+        return {"success": True, "name": name}
+
+    async def _setup_notifications(self, request: Request) -> dict[str, Any]:
+        """Save notification preferences."""
+        body = await request.json()
+
+        self._config_dir.mkdir(parents=True, exist_ok=True)
+        (self._config_dir / "notifications.json").write_text(json.dumps(body))
+
+        return {"success": True}
 
     # ========================================================================
     # Simulator

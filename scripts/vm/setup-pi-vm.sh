@@ -22,7 +22,7 @@ VM_DIR="${PROJECT_ROOT}/.pi-vm"
 PI_OS_VERSION="2024-03-15"
 PI_OS_URL="https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-${PI_OS_VERSION}/${PI_OS_VERSION}-raspios-bookworm-arm64-lite.img.xz"
 IMAGE_NAME="pi-os.img"
-IMAGE_SIZE="8G"
+IMAGE_SIZE="4G"
 
 # Default credentials
 PI_USER="pi"
@@ -212,7 +212,7 @@ qemu-system-aarch64 \
     -nographic
 
 echo ""
-echo "VM exited. Connect via: ssh -p 2222 pi@localhost"
+echo "VM exited. Connect via: ssh -p 9522 pi@localhost"
 SCRIPT
     chmod +x "${VM_DIR}/start-pi.sh"
 
@@ -248,7 +248,7 @@ qemu-system-aarch64 \
     -nographic
 
 echo ""
-echo "VM exited. Connect via: ssh -p 2222 pi@localhost"
+echo "VM exited. Connect via: ssh -p 9522 pi@localhost"
 SCRIPT
     chmod +x "${VM_DIR}/start-pi-fast.sh"
 
@@ -289,14 +289,14 @@ case "${1:-help}" in
         fi
         ;;
     ssh)
-        exec ssh -p 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null pi@localhost
+        exec ssh -p 9522 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null pi@localhost
         ;;
     setup)
         exec "${PROJECT_ROOT}/scripts/vm/setup-pi-vm.sh"
         ;;
     test)
         echo "Running integration tests in VM..."
-        ssh -p 2222 pi@localhost "cd ~/nightwatch && pytest tests/integration/ -v"
+        ssh -p 9522 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null pi@localhost "cd ~/nightwatch && pytest tests/integration/ -v"
         ;;
     simulate)
         scenario="${2:-normal}"

@@ -548,8 +548,12 @@ class CaptivePortal:
             logger.error(f"WiFi scan failed: {e}")
             # Return mock data for development
             return [
-                {"ssid": "MyHomeNetwork", "signal": 85},
-                {"ssid": "Neighbor_WiFi", "signal": 45},
+                {"ssid": "Smith Family Wi-Fi", "signal": 92},
+                {"ssid": "NETGEAR-5G-Home", "signal": 78},
+                {"ssid": "xfinitywifi", "signal": 65},
+                {"ssid": "TP-Link_2.4G_A3F0", "signal": 51},
+                {"ssid": "Linksys00487", "signal": 34},
+                {"ssid": "FBI Surveillance Van", "signal": 22},
             ]
 
     async def _save_wifi_credentials(self, credentials: WiFiCredentials) -> None:
@@ -633,6 +637,7 @@ def main():
         host=args.host,
         port=args.port,
         gateway_ip="127.0.0.1",  # localhost for dev
+        dashboard_url="http://localhost:9530/setup",
         on_wifi_configured=on_wifi_configured,
     )
 
@@ -641,6 +646,7 @@ def main():
         original_save = portal._save_wifi_credentials
 
         async def mock_save(credentials: WiFiCredentials) -> None:
+            await asyncio.sleep(2.5)  # Simulate WiFi connection delay
             config_file = temp_dir / "wifi.conf"
             config_file.write_text(f"ssid={credentials.ssid}\npassword={credentials.password}\n")
             print(f"📝 Saved credentials to {config_file}")

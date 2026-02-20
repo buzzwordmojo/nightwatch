@@ -1,0 +1,296 @@
+#!/bin/bash
+#
+# Flash an SD card with Raspberry Pi OS Lite + preload nightwatch project.
+#
+# Usage:
+#   ./bin/flash-sd /dev/sdX
+#
+# What it does:
+#   1. Flashes Raspberry Pi OS Lite (64-bit, Bookworm) to the SD card
+#   2. Enables SSH for headless boot
+#   3. Sets default credentials (pi/nightwatch)
+#   4. Copies the nightwatch project to /home/pi/nightwatch
+#   5. Creates a convenience install alias
+#
+# After booting the Pi:
+#   ssh pi@nightwatch.local
+#   cd nightwatch && sudo ./install.sh
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Pi OS image settings (same as VM setup)
+PI_OS_VERSION="2024-03-15"
+PI_OS_URL="https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-${PI_OS_VERSION}/${PI_OS_VERSION}-raspios-bookworm-arm64-lite.img.xz"
+CACHED_IMAGE="${PROJECT_ROOT}/.pi-vm/pi-os.img.xz"
+
+# Default credentials
+PI_USER="pi"
+PI_PASS="nightwatch"
+PI_PASS_HASH='$6$1A/bukiG8A1rKyDJ$uAPHeeDoY2tJA7cemoWETWbJ.1b/6FFS9NrXCJrjcJEU..SeXInyAqFTo5//fHwZUydo1PdrOfsF6ouTy6LDY.'
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+log_info()  { echo -e "${GREEN}[INFO]${NC} $1"; }
+log_warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
+log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+log_step()  { echo -e "${BLUE}[STEP]${NC} $1"; }
+
+usage() {
+    echo "Usage: $0 <device>"
+    echo ""
+    echo "Examples:"
+    echo "  $0 /dev/sdb"
+    echo "  $0 /dev/mmcblk0"
+    echo ""
+    echo "Use 'lsblk' to find your SD card device."
+    exit 1
+}
+
+# --- Validation ---
+
+DEVICE="${1:-}"
+if [ -z "$DEVICE" ]; then
+    usage
+fi
+
+if [ ! -b "$DEVICE" ]; then
+    log_error "$DEVICE is not a block device"
+    exit 1
+fi
+
+# Safety: refuse to write to NVMe or primary disk
+case "$DEVICE" in
+    /dev/nvme*|/dev/sda)
+        log_error "Refusing to write to $DEVICE — that looks like your system disk!"
+        exit 1
+        ;;
+esac
+
+# Show what we're about to destroy
+echo ""
+log_warn "This will ERASE ALL DATA on $DEVICE:"
+echo ""
+lsblk -o NAME,SIZE,MOUNTPOINT,LABEL "$DEVICE" 2>/dev/null || lsblk "$DEVICE"
+echo ""
+read -p "Type 'yes' to continue: " CONFIRM
+if [ "$CONFIRM" != "yes" ]; then
+    echo "Aborted."
+    exit 1
+fi
+
+# --- Step 1: Unmount any mounted partitions ---
+
+log_step "Unmounting partitions..."
+
+unmount_device() {
+    local dev="$1"
+
+    for part in $(lsblk -nrp -o NAME "$dev" | tail -n +2); do
+        local mnt
+        mnt=$(lsblk -nrp -o MOUNTPOINT "$part" 2>/dev/null | head -1)
+        [ -z "$mnt" ] && continue
+
+        # Try udisksctl first (handles auto-mounted drives cleanly)
+        if command -v udisksctl &>/dev/null; then
+            udisksctl unmount -b "$part" 2>/dev/null && log_info "Unmounted $part" && continue
+        fi
+
+        # Fall back to regular umount
+        sudo umount "$part" 2>/dev/null && log_info "Unmounted $part" && continue
+
+        # Kill anything holding it open, then lazy unmount
+        log_warn "$part is busy, forcing unmount..."
+        sudo fuser -km "$mnt" 2>/dev/null || true
+        sleep 1
+        sudo umount -l "$part" 2>/dev/null && log_info "Lazy-unmounted $part" && continue
+
+        log_error "Failed to unmount $part"
+        exit 1
+    done
+}
+
+unmount_device "$DEVICE"
+
+# Verify nothing is still mounted
+STILL_MOUNTED=$(lsblk -nrp -o NAME,MOUNTPOINT "$DEVICE" | awk '$2 != "" {print $1}')
+if [ -n "$STILL_MOUNTED" ]; then
+    log_error "Partitions still mounted: $STILL_MOUNTED"
+    log_error "Close any file managers or terminals using the SD card and try again."
+    exit 1
+fi
+
+log_info "All partitions unmounted"
+
+# --- Step 2: Get the image ---
+
+log_step "Preparing Raspberry Pi OS Lite image..."
+
+IMAGE_SOURCE=""
+if [ -f "$CACHED_IMAGE" ]; then
+    log_info "Using cached image: $CACHED_IMAGE"
+    IMAGE_SOURCE="$CACHED_IMAGE"
+else
+    log_info "Downloading Raspberry Pi OS Lite..."
+    DOWNLOAD_PATH="/tmp/raspios-lite-arm64.img.xz"
+    wget -O "$DOWNLOAD_PATH" "$PI_OS_URL" || {
+        log_error "Download failed"
+        exit 1
+    }
+    IMAGE_SOURCE="$DOWNLOAD_PATH"
+fi
+
+# --- Step 3: Flash ---
+
+log_step "Flashing $DEVICE (this takes a few minutes)..."
+xzcat "$IMAGE_SOURCE" | sudo dd of="$DEVICE" bs=4M conv=fsync status=progress
+sudo sync
+log_info "Flash complete"
+
+# --- Step 4: Expand rootfs to fill the card ---
+
+log_step "Expanding root partition to fill the card..."
+# Get the partition name (sdb2 or mmcblk0p2)
+sleep 2  # let kernel re-read partition table
+sudo partprobe "$DEVICE" 2>/dev/null || true
+sleep 1
+
+# Find partition naming scheme
+if [[ "$DEVICE" == *"mmcblk"* ]]; then
+    BOOT_PART="${DEVICE}p1"
+    ROOT_PART="${DEVICE}p2"
+else
+    BOOT_PART="${DEVICE}1"
+    ROOT_PART="${DEVICE}2"
+fi
+
+# Grow partition 2 to fill remaining space (yes to suppress "partition in use" warning)
+echo yes | sudo parted ---pretend-input-tty "$DEVICE" resizepart 2 100%
+sudo e2fsck -f -y "$ROOT_PART" || true
+sudo resize2fs "$ROOT_PART"
+log_info "Root partition expanded"
+
+# --- Step 5: Mount and configure ---
+
+log_step "Configuring for headless boot..."
+
+BOOT_MNT=$(mktemp -d)
+ROOT_MNT=$(mktemp -d)
+
+sudo mount "$BOOT_PART" "$BOOT_MNT"
+sudo mount "$ROOT_PART" "$ROOT_MNT"
+
+# Enable SSH
+sudo touch "$BOOT_MNT/ssh"
+log_info "SSH enabled"
+
+# Set default credentials
+echo "${PI_USER}:${PI_PASS_HASH}" | sudo tee "$BOOT_MNT/userconf.txt" > /dev/null
+log_info "User configured (${PI_USER}:${PI_PASS})"
+
+# Set hostname to nightwatch (so it broadcasts nightwatch.local via mDNS)
+echo "nightwatch" | sudo tee "$ROOT_MNT/etc/hostname" > /dev/null
+sudo sed -i 's/127\.0\.1\.1.*raspberrypi/127.0.1.1\tnightwatch/' "$ROOT_MNT/etc/hosts"
+log_info "Hostname set to nightwatch (nightwatch.local)"
+
+# --- Step 6: Copy nightwatch project ---
+
+log_step "Copying nightwatch project..."
+
+DEST="${ROOT_MNT}/home/pi/nightwatch"
+sudo mkdir -p "$DEST"
+
+# Copy project files, excluding dev/build artifacts
+sudo rsync -a --info=progress2 \
+    --exclude '.git' \
+    --exclude '.pi-vm' \
+    --exclude 'node_modules' \
+    --exclude '.next' \
+    --exclude '__pycache__' \
+    --exclude '*.pyc' \
+    --exclude '.venv' \
+    --exclude 'venv' \
+    --exclude '.env' \
+    "${PROJECT_ROOT}/" "$DEST/"
+
+# Fix ownership (pi user is UID 1000 on Raspberry Pi OS)
+sudo chown -R 1000:1000 "$DEST"
+
+log_info "Project copied to /home/pi/nightwatch"
+
+# --- Step 7: Auto-install on first boot ---
+
+log_step "Setting up auto-install on first boot..."
+
+# Create a one-shot systemd service that runs install.sh on first boot
+sudo tee "$ROOT_MNT/etc/systemd/system/nightwatch-first-boot.service" > /dev/null << 'EOF'
+[Unit]
+Description=Nightwatch First Boot Installer
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=!/opt/nightwatch/.installed
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c 'cd /home/pi/nightwatch && ./install.sh 2>&1 | tee /var/log/nightwatch-install.log && touch /opt/nightwatch/.installed'
+RemainAfterExit=yes
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=600
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Enable the service (symlink into multi-user.target.wants)
+sudo mkdir -p "$ROOT_MNT/etc/systemd/system/multi-user.target.wants"
+sudo ln -sf /etc/systemd/system/nightwatch-first-boot.service \
+    "$ROOT_MNT/etc/systemd/system/multi-user.target.wants/nightwatch-first-boot.service"
+
+log_info "Auto-install service enabled"
+
+# Add a helpful MOTD
+sudo tee "$ROOT_MNT/etc/motd" > /dev/null << 'EOF'
+
+  _   _ _       _     _               _       _
+ | \ | (_) __ _| |__ | |___      ____ | |_ ___| |__
+ |  \| | |/ _` | '_ \| __\ \ /\ / / _` | __/ __| '_ \
+ | |\  | | (_| | | | | |_ \ V  V / (_| | || (__| | | |
+ |_| \_|_|\__, |_| |_|\__| \_/\_/ \__,_|\__\___|_| |_|
+          |___/
+
+ Nightwatch auto-installs on first boot.
+ Check progress:  sudo journalctl -u nightwatch-first-boot -f
+ Install log:     /var/log/nightwatch-install.log
+
+EOF
+
+# --- Done ---
+
+log_step "Cleaning up..."
+sudo umount "$BOOT_MNT"
+sudo umount "$ROOT_MNT"
+rmdir "$BOOT_MNT" "$ROOT_MNT"
+sudo sync
+
+echo ""
+echo "=========================================="
+echo "  SD Card Ready!"
+echo "=========================================="
+echo ""
+echo "Next steps:"
+echo "  1. Put the SD card in the Pi and power on"
+echo "  2. Nightwatch will auto-install on first boot (~5-10 min)"
+echo "  3. SSH in:  ssh pi@nightwatch.local"
+echo "     Password: ${PI_PASS}"
+echo "  4. Check install progress: sudo journalctl -u nightwatch-first-boot -f"
+echo ""
+echo "Once installed, the dashboard will be at http://nightwatch.local:9530"
+echo ""

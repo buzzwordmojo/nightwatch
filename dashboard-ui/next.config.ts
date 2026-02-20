@@ -12,6 +12,10 @@ const nextConfig: NextConfig = {
         destination: "http://localhost:9531/api/:path*",
       },
       {
+        source: "/api/setup/:path*",
+        destination: "http://localhost:9531/api/setup/:path*",
+      },
+      {
         source: "/ws",
         destination: "http://localhost:9531/ws",
       },

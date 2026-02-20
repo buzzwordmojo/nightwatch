@@ -5,6 +5,7 @@
 # Usage:
 #   ./bin/vm start [--fast]     Start the Pi VM
 #   ./bin/vm ssh                SSH into running VM
+#   ./bin/vm setup              Initial VM setup
 #   ./bin/vm test               Run integration tests in VM
 #   ./bin/vm simulate <scenario> Run a simulation scenario
 #
@@ -24,12 +25,14 @@ case "${1:-help}" in
         fi
         ;;
     ssh)
-        exec ssh -p 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null pi@localhost
+        exec ssh -p 9522 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null pi@localhost
+        ;;
+    setup)
+        exec "${PROJECT_ROOT}/scripts/vm/setup-pi-vm.sh"
         ;;
     test)
         echo "Running integration tests in VM..."
-        ssh -p 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null pi@localhost \
-            "cd ~/nightwatch && source .venv/bin/activate && pytest tests/integration/ -v"
+        ssh -p 9522 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null pi@localhost "cd ~/nightwatch && pytest tests/integration/ -v"
         ;;
     simulate)
         scenario="${2:-normal}"
@@ -42,17 +45,16 @@ case "${1:-help}" in
         echo "Usage: ./bin/vm <command> [options]"
         echo ""
         echo "Commands:"
-        echo "  start [--fast]        Start the Pi VM (use --fast for quicker boot)"
+        echo "  start [--fast]        Start the Pi VM"
         echo "  ssh                   SSH into running VM"
+        echo "  setup                 Initial VM setup (download image, etc)"
         echo "  test                  Run integration tests in VM"
-        echo "  simulate <scenario>   Run simulation (normal, apnea, seizure, empty)"
+        echo "  simulate <scenario>   Run a simulation (normal, apnea, seizure)"
         echo ""
-        echo "Port Forwarding:"
-        echo "  localhost:9522  -> VM SSH"
-        echo "  localhost:9530  -> Dashboard UI"
-        echo "  localhost:9531  -> API"
-        echo "  localhost:9532  -> Captive Portal"
-        echo ""
-        echo "Default credentials: pi / raspberry"
+        echo "Examples:"
+        echo "  ./bin/vm setup        # First-time setup"
+        echo "  ./bin/vm start        # Start with accurate Pi emulation"
+        echo "  ./bin/vm start --fast # Start with fast emulation"
+        echo "  ./bin/vm ssh          # Connect to running VM"
         ;;
 esac
