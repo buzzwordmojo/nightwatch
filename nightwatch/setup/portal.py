@@ -81,6 +81,36 @@ class CaptivePortal:
         )
 
         # ====================================================================
+        # CORS Middleware for Cloud Proctor
+        # ====================================================================
+
+        @app.middleware("http")
+        async def add_cors_headers(request: Request, call_next):
+            """Add CORS headers for cross-origin requests from proctor page."""
+            # Handle preflight OPTIONS requests
+            if request.method == "OPTIONS":
+                response = Response()
+                response.headers["Access-Control-Allow-Origin"] = "*"
+                response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+                response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+                return response
+
+            response = await call_next(request)
+            response.headers["Access-Control-Allow-Origin"] = "*"
+            response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+            response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+            return response
+
+        # ====================================================================
+        # Health Check Endpoint
+        # ====================================================================
+
+        @app.get("/health")
+        async def health_check() -> dict:
+            """Simple health check for connectivity detection."""
+            return {"status": "ok", "service": "nightwatch-setup"}
+
+        # ====================================================================
         # Captive Portal Detection Endpoints
         # ====================================================================
 
@@ -147,27 +177,41 @@ class CaptivePortal:
 
         @app.post("/api/setup/wifi")
         async def configure_wifi(credentials: WiFiCredentials) -> JSONResponse:
-            """Configure WiFi credentials."""
-            logger.info(f"Configuring WiFi for SSID: {credentials.ssid}")
+            """Save WiFi credentials (connection happens after hotspot shuts down)."""
+            logger.info(f"Saving WiFi credentials for SSID: {credentials.ssid}")
 
             try:
                 # Store credentials
                 self._wifi_credentials = credentials
 
-                # Save to file
-                await self._save_wifi_credentials(credentials)
+                # Save credentials (don't connect yet - hotspot is using wlan0)
+                from nightwatch.setup.provisioning import WiFiProvisioner
+                provisioner = WiFiProvisioner()
+                await provisioner.save_credentials(credentials.ssid, credentials.password)
 
-                # Notify callback
-                if self.on_wifi_configured:
-                    await self._maybe_await(
-                        self.on_wifi_configured(credentials.ssid)
-                    )
+                # Mark system as configured
+                from nightwatch.setup.first_boot import mark_configured
+                mark_configured()
+
+                # Schedule hotspot shutdown AFTER response is sent
+                # WiFi connection will happen automatically when service restarts
+                async def delayed_shutdown():
+                    await asyncio.sleep(15)  # Give user time to read success page
+                    logger.info("Shutting down hotspot, service will restart and connect to WiFi")
+                    if self.on_wifi_configured:
+                        await self._maybe_await(
+                            self.on_wifi_configured(credentials.ssid)
+                        )
+
+                asyncio.create_task(delayed_shutdown())
 
                 return JSONResponse(
                     content={
                         "success": True,
-                        "message": "WiFi configured. Connecting...",
+                        "message": "WiFi credentials saved!",
+                        "ssid": credentials.ssid,
                         "redirect_url": self.dashboard_url,
+                        "hotspot_shutdown_delay": 15,
                     }
                 )
             except Exception as e:
@@ -399,8 +443,23 @@ class CaptivePortal:
         </div>
 
         <div class="card hidden" id="success-card">
-            <h2>Connected!</h2>
-            <p class="status success">Redirecting to dashboard...</p>
+            <h2>✓ WiFi Saved!</h2>
+            <p class="status success" style="margin-bottom: 16px;">Nightwatch will connect to: <strong id="connected-ssid"></strong></p>
+            <div style="background: rgba(0,0,0,0.2); padding: 16px; border-radius: 8px; margin-bottom: 16px;">
+                <p id="countdown-msg" style="margin-bottom: 16px; color: #fbbf24;">
+                    <span class="spinner"></span> Hotspot closing in <strong id="countdown">15</strong> seconds...
+                </p>
+                <div style="border-left: 3px solid #7c3aed; padding-left: 12px; margin-bottom: 16px;">
+                    <p style="margin-bottom: 8px; color: #fff; font-weight: 600;">Next steps:</p>
+                    <p style="margin-bottom: 6px; color: #ccc;">1. This page will close automatically</p>
+                    <p style="margin-bottom: 6px; color: #ccc;">2. Your phone reconnects to <strong id="home-wifi" style="color: #fff;"></strong></p>
+                    <p style="margin-bottom: 6px; color: #ccc;">3. Wait ~15 seconds for Nightwatch to connect</p>
+                    <p style="color: #ccc;">4. Open your browser and go to:</p>
+                </div>
+                <div style="background: rgba(124, 58, 237, 0.2); padding: 12px; border-radius: 8px; text-align: center;">
+                    <code id="dashboard-url" style="color: #fff; font-size: 18px; user-select: all;">nightwatch.local</code>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -478,9 +537,29 @@ class CaptivePortal:
                 if (data.success) {
                     document.getElementById('wifi-card').classList.add('hidden');
                     document.getElementById('success-card').classList.remove('hidden');
-                    setTimeout(() => {
-                        window.location.href = data.redirect_url;
-                    }, 2000);
+
+                    // Populate success card info
+                    document.getElementById('connected-ssid').textContent = selectedNetwork;
+                    document.getElementById('home-wifi').textContent = selectedNetwork;
+
+                    // Countdown until hotspot closes
+                    // Note: captive portal browser will close when hotspot shuts down
+                    // so we just show clear instructions for the user to follow
+                    const delay = data.hotspot_shutdown_delay || 15;
+                    let countdown = delay;
+                    const countdownEl = document.getElementById('countdown');
+                    const countdownMsgEl = document.getElementById('countdown-msg');
+
+                    const timer = setInterval(() => {
+                        countdown--;
+                        if (countdown > 0) {
+                            countdownEl.textContent = countdown;
+                        } else {
+                            clearInterval(timer);
+                            countdownMsgEl.innerHTML = '✓ Hotspot closed. Follow the steps above!';
+                            countdownMsgEl.style.color = '#22c55e';
+                        }
+                    }, 1000);
                 } else {
                     throw new Error(data.message || 'Connection failed');
                 }
@@ -509,39 +588,11 @@ class CaptivePortal:
 </html>"""
 
     async def _scan_wifi(self) -> list[dict]:
-        """Scan for available WiFi networks."""
+        """Scan for available WiFi networks using NetworkManager."""
         try:
-            result = await asyncio.create_subprocess_exec(
-                "iwlist", "wlan0", "scan",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, _ = await result.communicate()
-
-            networks = []
-            current = {}
-
-            for line in stdout.decode().split("\n"):
-                line = line.strip()
-                if "ESSID:" in line:
-                    ssid = line.split('"')[1] if '"' in line else ""
-                    if ssid and ssid not in [n["ssid"] for n in networks]:
-                        current["ssid"] = ssid
-                elif "Signal level=" in line:
-                    # Convert dBm to percentage
-                    try:
-                        dbm = int(line.split("Signal level=")[1].split(" ")[0])
-                        signal = max(0, min(100, 2 * (dbm + 100)))
-                        current["signal"] = signal
-                    except (ValueError, IndexError):
-                        current["signal"] = 50
-
-                if "ssid" in current and "signal" in current:
-                    networks.append(current)
-                    current = {}
-
-            # Sort by signal strength
-            networks.sort(key=lambda x: x.get("signal", 0), reverse=True)
+            from nightwatch.setup.provisioning import WiFiProvisioner
+            provisioner = WiFiProvisioner()
+            networks = await provisioner.scan_networks()
             return networks[:10]  # Top 10 networks
 
         except Exception as e:
@@ -557,7 +608,7 @@ class CaptivePortal:
             ]
 
     async def _save_wifi_credentials(self, credentials: WiFiCredentials) -> None:
-        """Save WiFi credentials to wpa_supplicant format."""
+        """Save WiFi credentials for NetworkManager."""
         from nightwatch.setup.provisioning import WiFiProvisioner
 
         provisioner = WiFiProvisioner()

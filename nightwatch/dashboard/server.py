@@ -16,7 +16,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -89,6 +89,20 @@ class DashboardServer:
             description="Epilepsy monitoring system dashboard",
             version="0.1.0",
         )
+
+        # CORS middleware for cloud proctor setup page
+        @self._app.middleware("http")
+        async def add_cors_headers(request, call_next):
+            if request.method == "OPTIONS":
+                response = Response()
+                response.headers["Access-Control-Allow-Origin"] = "*"
+                response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+                response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+                return response
+            response = await call_next(request)
+            response.headers["Access-Control-Allow-Origin"] = "*"
+            return response
+
         self._ws_manager = ConnectionManager()
         self._event_buffer = EventBuffer(capacity=1000)
         self._running = False

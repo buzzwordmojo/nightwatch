@@ -204,6 +204,18 @@ async def run_nightwatch(
             return
         print("✅ Setup complete, starting monitoring...")
 
+    # Ensure WiFi is connected (uses saved credentials)
+    if not mock_sensors:
+        from nightwatch.setup.provisioning import WiFiProvisioner
+        provisioner = WiFiProvisioner()
+        if not await provisioner.is_connected():
+            print("📶 Connecting to WiFi...")
+            connected = await provisioner.connect()
+            if connected:
+                print("📶 WiFi connected!")
+            else:
+                print("⚠️  Could not connect to WiFi - continuing anyway")
+
     # Create event bus
     event_bus = EventBus(
         event_endpoint=config.event_system.event_endpoint,
@@ -259,8 +271,7 @@ async def run_nightwatch(
             detectors.append(MockBCGDetector(publisher=publisher))
 
     if not detectors:
-        print("❌ No detectors enabled! Check configuration.")
-        sys.exit(1)
+        print("⚠️  No detectors enabled - dashboard only mode")
 
     # Create dashboard server
     dashboard = None
