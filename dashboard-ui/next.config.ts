@@ -9,6 +9,7 @@ const nextConfig: NextConfig = {
 
   // Required for static export
   ...(isStaticExport && {
+    basePath: "/nightwatch/setup",
     images: { unoptimized: true },
     trailingSlash: true,
   }),
