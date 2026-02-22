@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 # Paths
 STATIC_DIR = Path(__file__).parent / "wizard" / "static"
 TEMPLATES_DIR = Path(__file__).parent / "wizard" / "templates"
+REACT_PORTAL_DIR = Path(__file__).parent / "wizard" / "react"  # React static build
 
 
 class WiFiCredentials(BaseModel):
@@ -167,6 +168,10 @@ class CaptivePortal:
         @app.get("/setup", response_class=HTMLResponse)
         async def setup_page() -> HTMLResponse:
             """Serve the main setup wizard page."""
+            # Try React portal first, fall back to inline HTML
+            react_index = REACT_PORTAL_DIR / "portal" / "index.html"
+            if react_index.exists():
+                return HTMLResponse(content=react_index.read_text())
             return HTMLResponse(content=self._get_setup_html())
 
         @app.get("/api/setup/wifi/scan")
@@ -263,6 +268,11 @@ class CaptivePortal:
         # Mount static files if directory exists
         if STATIC_DIR.exists():
             app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+        # Mount React static files (Next.js _next directory)
+        react_next_dir = REACT_PORTAL_DIR / "_next"
+        if react_next_dir.exists():
+            app.mount("/_next", StaticFiles(directory=react_next_dir), name="react_next")
 
         return app
 
