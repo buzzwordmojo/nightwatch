@@ -5,14 +5,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 
 interface TrustCertCardProps {
-  /** URL to open for certificate trust (default: https://192.168.4.1) */
+  /** URL to open for certificate trust (default: https://nightwatch.local) */
   certUrl?: string;
   /** Called when user clicks "I've accepted, continue" */
   onContinue: () => void;
 }
 
 export function TrustCertCard({
-  certUrl = "https://192.168.4.1",
+  certUrl = "https://nightwatch.local",
   onContinue,
 }: TrustCertCardProps) {
   const handleOpenCertPage = () => {

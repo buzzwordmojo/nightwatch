@@ -78,7 +78,7 @@ function ProctorContent() {
       {/* Step 2: Trust Certificate */}
       {wifi.step === "trust-cert" && (
         <TrustCertCard
-          certUrl="https://192.168.4.1"
+          certUrl="https://nightwatch.local"
           onContinue={wifi.proceedAfterCertTrust}
         />
       )}
