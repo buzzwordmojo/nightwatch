@@ -11,6 +11,7 @@ import {
   ConnectionStatus,
   HotspotInstructions,
   WifiSuccessCard,
+  TrustCertCard,
   useWifiSetup,
 } from "@/components/wifi";
 import { ArrowLeft, RefreshCw, Loader2 } from "lucide-react";
@@ -27,17 +28,19 @@ function ProctorContent() {
     autoStart: true,
   });
 
-  // Calculate progress percentage
+  // Calculate progress percentage (4 steps now: connect, trust-cert, select-wifi, connect)
   const getProgress = () => {
     switch (wifi.step) {
       case "connect-hotspot":
         return 0;
+      case "trust-cert":
+        return 25;
       case "select-network":
       case "entering-password":
-        return 33;
+        return 50;
       case "connecting":
       case "searching":
-        return 66;
+        return 75;
       case "complete":
         return 100;
       default:
@@ -53,10 +56,11 @@ function ProctorContent() {
           <Progress value={getProgress()} className="h-2" />
           <p className="text-xs text-muted-foreground text-center">
             {wifi.step === "connect-hotspot" && "Step 1: Connect to device"}
+            {wifi.step === "trust-cert" && "Step 2: Trust certificate"}
             {(wifi.step === "select-network" || wifi.step === "entering-password") &&
-              "Step 2: Select your WiFi"}
+              "Step 3: Select your WiFi"}
             {(wifi.step === "connecting" || wifi.step === "searching") &&
-              "Step 3: Connecting..."}
+              "Step 4: Connecting..."}
           </p>
         </div>
       )}
@@ -71,13 +75,21 @@ function ProctorContent() {
         />
       )}
 
-      {/* Step 2: Select Network */}
+      {/* Step 2: Trust Certificate */}
+      {wifi.step === "trust-cert" && (
+        <TrustCertCard
+          certUrl="https://192.168.4.1"
+          onContinue={wifi.proceedAfterCertTrust}
+        />
+      )}
+
+      {/* Step 3: Select Network */}
       {wifi.step === "select-network" && (
         <Card>
           <CardHeader className="pb-4">
             <CardTitle className="flex items-center gap-2 text-lg">
               <span className="flex items-center justify-center w-8 h-8 rounded-full bg-primary/10 text-primary text-sm font-bold">
-                2
+                3
               </span>
               Select Your WiFi
             </CardTitle>
@@ -109,14 +121,14 @@ function ProctorContent() {
         </Card>
       )}
 
-      {/* Step 2b: Enter Password */}
+      {/* Step 3b: Enter Password */}
       {wifi.step === "entering-password" && (
         <Card>
           <CardHeader className="pb-4">
             <div className="flex items-center justify-between">
               <CardTitle className="flex items-center gap-2 text-lg">
                 <span className="flex items-center justify-center w-8 h-8 rounded-full bg-primary/10 text-primary text-sm font-bold">
-                  2
+                  3
                 </span>
                 Enter Password
               </CardTitle>
@@ -151,13 +163,13 @@ function ProctorContent() {
         </Card>
       )}
 
-      {/* Step 3: Connecting / Searching */}
+      {/* Step 4: Connecting / Searching */}
       {(wifi.step === "connecting" || wifi.step === "searching") && (
         <Card>
           <CardHeader className="pb-4">
             <CardTitle className="flex items-center gap-2 text-lg">
               <span className="flex items-center justify-center w-8 h-8 rounded-full bg-primary/10 text-primary text-sm font-bold">
-                3
+                4
               </span>
               {wifi.step === "connecting" ? "Connecting..." : "Finding Nightwatch..."}
             </CardTitle>
@@ -183,7 +195,7 @@ function ProctorContent() {
         </Card>
       )}
 
-      {/* Step 4: Complete */}
+      {/* Step 5: Complete */}
       {wifi.step === "complete" && wifi.dashboardUrl && (
         <WifiSuccessCard
           dashboardUrl={wifi.dashboardUrl}

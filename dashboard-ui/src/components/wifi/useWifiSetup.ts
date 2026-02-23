@@ -9,6 +9,7 @@ export type WifiSetupStep =
   | "select-network"
   | "entering-password"
   | "connecting"
+  | "trust-cert"
   | "searching"
   | "complete"
   | "error";
@@ -23,6 +24,8 @@ export interface WifiSetupState {
   hotspotConnected: boolean;
   hotspotAttempts: number;
   searchProgress: { current: number; total: number } | null;
+  /** Countdown seconds until hotspot shuts down */
+  shutdownCountdown: number | null;
 }
 
 export interface WifiSetupActions {
@@ -32,6 +35,8 @@ export interface WifiSetupActions {
   connect: () => Promise<void>;
   retry: () => void;
   goBack: () => void;
+  /** Proceed after user has accepted the self-signed certificate */
+  proceedAfterCertTrust: () => void;
 }
 
 export interface UseWifiSetupOptions {
@@ -65,10 +70,12 @@ export function useWifiSetup(options: UseWifiSetupOptions = {}): WifiSetupState 
     hotspotConnected: false,
     hotspotAttempts: 0,
     searchProgress: null,
+    shutdownCountdown: null,
   });
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const pollingRef = useRef<number | null>(null);
+  const countdownRef = useRef<number | null>(null);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -76,6 +83,9 @@ export function useWifiSetup(options: UseWifiSetupOptions = {}): WifiSetupState 
       abortControllerRef.current?.abort();
       if (pollingRef.current) {
         clearTimeout(pollingRef.current);
+      }
+      if (countdownRef.current) {
+        clearInterval(countdownRef.current);
       }
     };
   }, []);
@@ -90,9 +100,9 @@ export function useWifiSetup(options: UseWifiSetupOptions = {}): WifiSetupState 
       setState((s) => ({
         ...s,
         hotspotConnected: true,
-        step: "select-network",
+        // Go to trust-cert step first (user must accept self-signed cert)
+        step: "trust-cert",
       }));
-      // Auto-scan networks when hotspot detected
       return true;
     }
 
@@ -170,7 +180,8 @@ export function useWifiSetup(options: UseWifiSetupOptions = {}): WifiSetupState 
 
     try {
       // Submit credentials
-      await submitCredentials(portalUrl, selectedSsid, password);
+      const response = await submitCredentials(portalUrl, selectedSsid, password);
+      const shutdownDelay = response.hotspot_shutdown_delay || 15;
 
       // For portal page, skip device search (browser will close)
       if (skipDeviceSearch) {
@@ -178,11 +189,28 @@ export function useWifiSetup(options: UseWifiSetupOptions = {}): WifiSetupState 
         if (typeof window !== "undefined") {
           localStorage.setItem("nightwatch_setup_complete", "true");
         }
+
+        // Start countdown timer
         setState((s) => ({
           ...s,
           step: "complete",
           searchProgress: null,
+          shutdownCountdown: shutdownDelay,
         }));
+
+        // Countdown interval
+        countdownRef.current = window.setInterval(() => {
+          setState((s) => {
+            if (s.shutdownCountdown !== null && s.shutdownCountdown > 0) {
+              return { ...s, shutdownCountdown: s.shutdownCountdown - 1 };
+            }
+            if (countdownRef.current) {
+              clearInterval(countdownRef.current);
+            }
+            return { ...s, shutdownCountdown: 0 };
+          });
+        }, 1000);
+
         return;
       }
 
@@ -257,6 +285,13 @@ export function useWifiSetup(options: UseWifiSetupOptions = {}): WifiSetupState 
     });
   }, []);
 
+  const proceedAfterCertTrust = useCallback(() => {
+    setState((s) => ({
+      ...s,
+      step: "select-network",
+    }));
+  }, []);
+
   return {
     ...state,
     setSelectedSsid,
@@ -265,5 +300,6 @@ export function useWifiSetup(options: UseWifiSetupOptions = {}): WifiSetupState 
     connect,
     retry,
     goBack,
+    proceedAfterCertTrust,
   };
 }
