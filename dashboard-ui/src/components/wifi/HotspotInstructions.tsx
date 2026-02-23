@@ -1,13 +1,18 @@
 "use client";
 
-import { Wifi, Smartphone, Settings } from "lucide-react";
+import { Wifi, Smartphone, Settings, Search } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 
 interface HotspotInstructionsProps {
   ssid: string;
   isConnected?: boolean;
   isChecking?: boolean;
   attemptCount?: number;
+  /** Called when user manually says they're connected */
+  onManualProceed?: () => void;
+  /** Called when user completed setup via captive portal popup */
+  onSkipToSearch?: () => void;
 }
 
 export function HotspotInstructions({
@@ -15,6 +20,8 @@ export function HotspotInstructions({
   isConnected,
   isChecking,
   attemptCount = 0,
+  onManualProceed,
+  onSkipToSearch,
 }: HotspotInstructionsProps) {
   return (
     <Card>
@@ -85,6 +92,33 @@ export function HotspotInstructions({
             </div>
           )}
         </div>
+
+        {/* Manual options */}
+        {(onManualProceed || onSkipToSearch) && (
+          <div className="pt-4 space-y-2">
+            {onManualProceed && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full"
+                onClick={onManualProceed}
+              >
+                I&apos;m connected — Continue
+              </Button>
+            )}
+            {onSkipToSearch && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="w-full text-muted-foreground"
+                onClick={onSkipToSearch}
+              >
+                <Search className="h-4 w-4 mr-2" />
+                Already set up WiFi? Find device
+              </Button>
+            )}
+          </div>
+        )}
       </CardContent>
     </Card>
   );

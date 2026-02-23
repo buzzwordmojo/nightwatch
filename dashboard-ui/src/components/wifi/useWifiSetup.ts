@@ -37,6 +37,8 @@ export interface WifiSetupActions {
   goBack: () => void;
   /** Proceed after user has accepted the self-signed certificate */
   proceedAfterCertTrust: () => void;
+  /** Skip directly to searching (for when setup was done via captive portal) */
+  skipToSearch: () => void;
 }
 
 export interface UseWifiSetupOptions {
@@ -136,6 +138,30 @@ export function useWifiSetup(options: UseWifiSetupOptions = {}): WifiSetupState 
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.step]);
+
+  // Detect when page becomes visible again (e.g., after captive portal closes)
+  useEffect(() => {
+    if (skipHotspotDetection) return;
+
+    const handleVisibilityChange = async () => {
+      if (document.visibilityState === "visible" && state.step === "connect-hotspot") {
+        // User returned to the page - check if hotspot is reachable
+        const health = await checkHealth(portalUrl, 2000);
+        if (health) {
+          setState((s) => ({
+            ...s,
+            hotspotConnected: true,
+            step: "trust-cert",
+          }));
+        }
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [skipHotspotDetection, state.step, portalUrl]);
 
   const setSelectedSsid = useCallback((ssid: string | null) => {
     setState((s) => ({
@@ -292,6 +318,45 @@ export function useWifiSetup(options: UseWifiSetupOptions = {}): WifiSetupState 
     }));
   }, []);
 
+  const skipToSearch = useCallback(async () => {
+    setState((s) => ({ ...s, step: "searching" }));
+
+    // Create abort controller for search
+    abortControllerRef.current = new AbortController();
+
+    // Poll for device on home network
+    const result = await pollForDevice({
+      maxAttempts: 45,
+      intervalMs: 2000,
+      signal: abortControllerRef.current.signal,
+      onAttempt: (attempt, maxAttempts) => {
+        setState((s) => ({
+          ...s,
+          searchProgress: { current: attempt, total: maxAttempts },
+        }));
+      },
+    });
+
+    if (result.found && result.url) {
+      if (typeof window !== "undefined") {
+        localStorage.setItem("nightwatch_setup_complete", "true");
+      }
+      setState((s) => ({
+        ...s,
+        step: "complete",
+        dashboardUrl: result.url,
+        searchProgress: null,
+      }));
+    } else {
+      setState((s) => ({
+        ...s,
+        step: "error",
+        error: "Could not find Nightwatch on your network. Please try again.",
+        searchProgress: null,
+      }));
+    }
+  }, []);
+
   return {
     ...state,
     setSelectedSsid,
@@ -301,5 +366,6 @@ export function useWifiSetup(options: UseWifiSetupOptions = {}): WifiSetupState 
     retry,
     goBack,
     proceedAfterCertTrust,
+    skipToSearch,
   };
 }

@@ -72,6 +72,8 @@ function ProctorContent() {
           isConnected={wifi.hotspotConnected}
           isChecking={true}
           attemptCount={wifi.hotspotAttempts}
+          onManualProceed={wifi.proceedAfterCertTrust}
+          onSkipToSearch={wifi.skipToSearch}
         />
       )}
 
