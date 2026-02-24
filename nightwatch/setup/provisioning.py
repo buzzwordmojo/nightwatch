@@ -2,6 +2,7 @@
 WiFi provisioning for Nightwatch.
 
 Handles saving WiFi credentials, connecting to networks, and verifying connectivity.
+Uses NetworkManager (nmcli) for connection management on Raspberry Pi OS Bookworm+.
 """
 
 from __future__ import annotations
@@ -16,7 +17,6 @@ logger = logging.getLogger(__name__)
 # Configuration paths
 DEFAULT_CONFIG_DIR = Path("/etc/nightwatch")
 WIFI_CONFIG_FILE = "wifi.conf"
-WPA_SUPPLICANT_CONF = Path("/etc/wpa_supplicant/wpa_supplicant.conf")
 
 
 @dataclass
@@ -24,8 +24,8 @@ class WiFiProvisioner:
     """
     Manages WiFi credential storage and network connection.
 
-    Handles saving credentials in both Nightwatch config and
-    wpa_supplicant format for system-level connectivity.
+    Uses NetworkManager (nmcli) for connecting to WiFi networks,
+    which is the default on Raspberry Pi OS Bookworm and later.
     """
 
     config_dir: Path = DEFAULT_CONFIG_DIR
@@ -49,33 +49,46 @@ class WiFiProvisioner:
         wifi_config.write_text(f"ssid={ssid}\npassword={password}\n")
         wifi_config.chmod(0o600)  # Restrict permissions
 
-        # Generate wpa_supplicant config
-        await self._update_wpa_supplicant(ssid, password)
-
         logger.info("WiFi credentials saved")
 
-    async def connect(self) -> bool:
+    async def connect(self, ssid: str | None = None, password: str | None = None) -> bool:
         """
-        Connect to the configured WiFi network.
+        Connect to a WiFi network using NetworkManager.
+
+        If ssid/password provided, connects to that network.
+        Otherwise, reads from saved credentials.
 
         Returns:
             True if connection successful
         """
-        logger.info("Attempting WiFi connection")
+        # Load credentials if not provided
+        if ssid is None or password is None:
+            creds = await self._load_credentials()
+            if creds is None:
+                logger.error("No WiFi credentials found")
+                return False
+            ssid, password = creds
+
+        logger.info(f"Attempting WiFi connection to: {ssid}")
 
         try:
-            # Reconfigure wpa_supplicant to use new credentials
-            await self._run_command(["wpa_cli", "-i", self.interface, "reconfigure"])
+            # Use nmcli to connect
+            result = await asyncio.create_subprocess_exec(
+                "nmcli", "device", "wifi", "connect", ssid,
+                "password", password,
+                "ifname", self.interface,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await result.communicate()
 
-            # Wait for connection
-            for _ in range(30):  # 30 second timeout
-                if await self._check_connected():
-                    logger.info("WiFi connected successfully")
-                    return True
-                await asyncio.sleep(1)
-
-            logger.warning("WiFi connection timed out")
-            return False
+            if result.returncode == 0:
+                logger.info(f"WiFi connected successfully to {ssid}")
+                return True
+            else:
+                error_msg = stderr.decode().strip() or stdout.decode().strip()
+                logger.error(f"WiFi connection failed: {error_msg}")
+                return False
 
         except Exception as e:
             logger.error(f"WiFi connection failed: {e}")
@@ -136,7 +149,11 @@ class WiFiProvisioner:
     async def disconnect(self) -> None:
         """Disconnect from the current WiFi network."""
         try:
-            await self._run_command(["wpa_cli", "-i", self.interface, "disconnect"])
+            await asyncio.create_subprocess_exec(
+                "nmcli", "device", "disconnect", self.interface,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
             logger.info("Disconnected from WiFi")
         except Exception as e:
             logger.warning(f"Could not disconnect: {e}")
@@ -154,88 +171,99 @@ class WiFiProvisioner:
             wifi_config.unlink()
             logger.info(f"Removed credentials for: {ssid}")
 
-        # Note: wpa_supplicant config would need manual cleanup
-        # to avoid leaving stale network configs
-
-    async def _update_wpa_supplicant(self, ssid: str, password: str) -> None:
-        """Update wpa_supplicant.conf with new network."""
-        # Generate PSK using wpa_passphrase
+        # Remove from NetworkManager
         try:
-            result = await asyncio.create_subprocess_exec(
-                "wpa_passphrase", ssid, password,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+            await asyncio.create_subprocess_exec(
+                "nmcli", "connection", "delete", ssid,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
             )
-            stdout, _ = await result.communicate()
-            network_block = stdout.decode()
+        except Exception:
+            pass  # Connection may not exist
 
-            # Read existing config
-            if WPA_SUPPLICANT_CONF.exists():
-                existing = WPA_SUPPLICANT_CONF.read_text()
-            else:
-                existing = """ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev
-update_config=1
-country=US
-"""
-
-            # Remove any existing network block for this SSID
-            # (Simple approach - full implementation would parse properly)
-            lines = existing.split("\n")
-            new_lines = []
-            skip_until_close = False
-
-            for line in lines:
-                if f'ssid="{ssid}"' in line:
-                    # Found existing, skip until closing brace
-                    skip_until_close = True
-                    # Also remove the preceding "network={" line
-                    if new_lines and new_lines[-1].strip() == "network={":
-                        new_lines.pop()
-                elif skip_until_close and line.strip() == "}":
-                    skip_until_close = False
-                    continue
-                elif not skip_until_close:
-                    new_lines.append(line)
-
-            # Add new network block
-            new_config = "\n".join(new_lines).rstrip() + "\n\n" + network_block
-
-            # Write back
-            WPA_SUPPLICANT_CONF.write_text(new_config)
-            WPA_SUPPLICANT_CONF.chmod(0o600)
-
-            logger.debug("Updated wpa_supplicant.conf")
-
-        except Exception as e:
-            logger.error(f"Failed to update wpa_supplicant: {e}")
-            raise
-
-    async def _check_connected(self) -> bool:
-        """Check if WiFi is connected."""
+    async def is_connected(self) -> bool:
+        """Check if WiFi is currently connected."""
         try:
             result = await asyncio.create_subprocess_exec(
-                "wpa_cli", "-i", self.interface, "status",
+                "nmcli", "-t", "-f", "STATE", "device", "show", self.interface,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
             )
             stdout, _ = await result.communicate()
-            return "wpa_state=COMPLETED" in stdout.decode()
+            output = stdout.decode()
+            # Look for STATE:connected
+            return "STATE:connected" in output
         except Exception:
             return False
 
-    async def _run_command(self, cmd: list[str]) -> str:
-        """Run a shell command and return output."""
-        result = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await result.communicate()
+    async def scan_networks(self) -> list[dict]:
+        """
+        Scan for available WiFi networks.
 
-        if result.returncode != 0:
-            raise RuntimeError(f"Command failed: {' '.join(cmd)}\n{stderr.decode()}")
+        Returns:
+            List of dicts with ssid, signal, security info
+        """
+        try:
+            # Trigger a rescan
+            await asyncio.create_subprocess_exec(
+                "nmcli", "device", "wifi", "rescan",
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await asyncio.sleep(2)
 
-        return stdout.decode()
+            # Get results
+            result = await asyncio.create_subprocess_exec(
+                "nmcli", "-t", "-f", "SSID,SIGNAL,SECURITY", "device", "wifi", "list",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            stdout, _ = await result.communicate()
+
+            networks = []
+            seen_ssids = set()
+            for line in stdout.decode().strip().split("\n"):
+                if not line:
+                    continue
+                parts = line.split(":")
+                if len(parts) >= 3:
+                    ssid = parts[0]
+                    if ssid and ssid not in seen_ssids:
+                        seen_ssids.add(ssid)
+                        networks.append({
+                            "ssid": ssid,
+                            "signal": int(parts[1]) if parts[1].isdigit() else 0,
+                            "security": parts[2] if len(parts) > 2 else "",
+                        })
+
+            # Sort by signal strength
+            networks.sort(key=lambda x: x["signal"], reverse=True)
+            return networks
+
+        except Exception as e:
+            logger.error(f"WiFi scan failed: {e}")
+            return []
+
+    async def _load_credentials(self) -> tuple[str, str] | None:
+        """Load saved WiFi credentials."""
+        wifi_config = self.config_dir / WIFI_CONFIG_FILE
+        if not wifi_config.exists():
+            return None
+
+        try:
+            content = wifi_config.read_text()
+            ssid = None
+            password = None
+            for line in content.split("\n"):
+                if line.startswith("ssid="):
+                    ssid = line[5:].strip()
+                elif line.startswith("password="):
+                    password = line[9:].strip()
+            if ssid and password:
+                return (ssid, password)
+            return None
+        except Exception:
+            return None
 
 
 # Convenience function
@@ -252,4 +280,4 @@ async def provision_wifi(ssid: str, password: str) -> bool:
     """
     provisioner = WiFiProvisioner()
     await provisioner.save_credentials(ssid, password)
-    return await provisioner.connect()
+    return await provisioner.connect(ssid, password)

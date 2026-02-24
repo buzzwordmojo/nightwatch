@@ -1721,12 +1721,24 @@ class DashboardServer:
         # Start update broadcast task
         self._update_task = asyncio.create_task(self._update_loop())
 
+        # Configure SSL if enabled and certs exist
+        ssl_keyfile = None
+        ssl_certfile = None
+        if self._config.ssl_enabled:
+            cert_path = Path(self._config.ssl_cert_file)
+            key_path = Path(self._config.ssl_key_file)
+            if cert_path.exists() and key_path.exists():
+                ssl_certfile = str(cert_path)
+                ssl_keyfile = str(key_path)
+
         # Start uvicorn server in background
         config = uvicorn.Config(
             self._app,
             host=self._config.host,
             port=self._config.port,
             log_level="info",
+            ssl_keyfile=ssl_keyfile,
+            ssl_certfile=ssl_certfile,
         )
         self._server = uvicorn.Server(config)
         self._server_task = asyncio.create_task(self._server.serve())
@@ -1755,8 +1767,19 @@ class DashboardServer:
 
     def run(self) -> None:
         """Run server synchronously (for standalone use)."""
+        ssl_keyfile = None
+        ssl_certfile = None
+        if self._config.ssl_enabled:
+            cert_path = Path(self._config.ssl_cert_file)
+            key_path = Path(self._config.ssl_key_file)
+            if cert_path.exists() and key_path.exists():
+                ssl_certfile = str(cert_path)
+                ssl_keyfile = str(key_path)
+
         uvicorn.run(
             self._app,
             host=self._config.host,
             port=self._config.port,
+            ssl_keyfile=ssl_keyfile,
+            ssl_certfile=ssl_certfile,
         )

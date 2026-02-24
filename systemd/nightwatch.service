@@ -8,23 +8,22 @@ Type=simple
 User=nightwatch
 Group=nightwatch
 WorkingDirectory=/opt/nightwatch
-Environment="PATH=/opt/nightwatch/venv/bin:/usr/bin"
-ExecStart=/opt/nightwatch/venv/bin/python -m nightwatch.main
+Environment="PATH=/opt/nightwatch/venv/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ExecStart=/opt/nightwatch/venv/bin/python -m nightwatch
 Restart=always
 RestartSec=5
 StandardOutput=journal
 StandardError=journal
 
-# Watchdog - restart if unresponsive
-WatchdogSec=60
-
 # Hardening
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/nightwatch /var/log/nightwatch /etc/nightwatch
-AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+ReadWritePaths=/var/lib/nightwatch /var/log/nightwatch /etc/nightwatch /var/lib/misc
 PrivateTmp=true
+
+# Network capabilities for hotspot management
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE
 
 [Install]
 WantedBy=multi-user.target

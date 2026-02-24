@@ -98,7 +98,7 @@ async def run_setup_portal(
             host="0.0.0.0",
             port=9532 if dev_mode else 80,
             gateway_ip="127.0.0.1" if dev_mode else "192.168.4.1",
-            dashboard_url=f"http://localhost:{config.dashboard.port}/setup" if dev_mode else "http://nightwatch.local:9530/setup",
+            dashboard_url=f"http://localhost:{config.dashboard.port}/setup" if dev_mode else "https://nightwatch.local/setup",
             on_wifi_configured=on_wifi_configured,
         )
 

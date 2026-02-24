@@ -162,6 +162,13 @@ class HotspotManager:
         interface = self.config.interface
         gateway = self.config.gateway_ip
 
+        # First, disconnect from any existing WiFi connection via NetworkManager
+        try:
+            await self._run_command(["nmcli", "device", "disconnect", interface])
+            logger.info(f"Disconnected {interface} from any existing WiFi")
+        except Exception:
+            pass  # May not be connected
+
         commands = [
             # Bring interface down
             ["ip", "link", "set", interface, "down"],
