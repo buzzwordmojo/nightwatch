@@ -22,6 +22,7 @@ INSTALL_DIR="/opt/nightwatch"
 CONFIG_DIR="/etc/nightwatch"
 DATA_DIR="/var/lib/nightwatch"
 LOG_DIR="/var/log/nightwatch"
+CERTS_DIR="${CONFIG_DIR}/certs"
 VENV_DIR="${INSTALL_DIR}/venv"
 USER="nightwatch"
 GROUP="nightwatch"
@@ -74,7 +75,21 @@ install_dependencies() {
         git \
         curl \
         nodejs \
-        npm
+        npm \
+        hostapd \
+        dnsmasq \
+        avahi-daemon \
+        openssl
+
+    # Disable hostapd and dnsmasq system services - Nightwatch manages them directly
+    systemctl disable hostapd 2>/dev/null || true
+    systemctl stop hostapd 2>/dev/null || true
+    systemctl disable dnsmasq 2>/dev/null || true
+    systemctl stop dnsmasq 2>/dev/null || true
+
+    # Enable avahi for mDNS discovery (nightwatch.local)
+    systemctl enable avahi-daemon
+    systemctl start avahi-daemon
 
     log_info "System dependencies installed"
 }
@@ -94,6 +109,7 @@ create_user() {
     usermod -aG dialout "$USER"  # Serial/UART access
     usermod -aG audio "$USER"    # Audio device access
     usermod -aG gpio "$USER" 2>/dev/null || true  # GPIO access (may not exist)
+    usermod -aG netdev "$USER"   # Network device management (for hotspot)
 }
 
 # Create directories
@@ -113,6 +129,68 @@ create_directories() {
     log_info "Directories created"
 }
 
+# Generate CA and server SSL certificates
+# Creates a CA cert (for user to install) and a server cert signed by the CA
+generate_certificates() {
+    log_step "Generating SSL certificates..."
+
+    mkdir -p "$CERTS_DIR"
+
+    local ca_key="${CERTS_DIR}/nightwatch-ca.key"
+    local ca_cert="${CERTS_DIR}/nightwatch-ca.crt"
+    local server_key="${CERTS_DIR}/nightwatch.key"
+    local server_cert="${CERTS_DIR}/nightwatch.crt"
+
+    # Skip if certs already exist
+    if [ -f "$ca_cert" ] && [ -f "$server_cert" ]; then
+        log_info "SSL certificates already exist, skipping generation"
+        return
+    fi
+
+    # 1. Generate CA key and certificate
+    log_info "Generating CA certificate..."
+    openssl genrsa -out "$ca_key" 2048 2>/dev/null
+    openssl req -x509 -new -nodes -key "$ca_key" -sha256 -days 3650 \
+        -out "$ca_cert" \
+        -subj "/CN=Nightwatch CA/O=Nightwatch Monitor" \
+        2>/dev/null
+
+    # 2. Generate server key and CSR
+    log_info "Generating server certificate..."
+    openssl genrsa -out "$server_key" 2048 2>/dev/null
+    openssl req -new -key "$server_key" \
+        -out "${CERTS_DIR}/nightwatch.csr" \
+        -subj "/CN=nightwatch.local/O=Nightwatch Monitor" \
+        2>/dev/null
+
+    # 3. Create extension file for SANs
+    cat > "${CERTS_DIR}/san.ext" << EOF
+authorityKeyIdentifier=keyid,issuer
+basicConstraints=CA:FALSE
+keyUsage=digitalSignature, keyEncipherment
+extendedKeyUsage=serverAuth
+subjectAltName=DNS:nightwatch.local,DNS:localhost,IP:127.0.0.1,IP:192.168.4.1
+EOF
+
+    # 4. Sign server cert with CA
+    openssl x509 -req -in "${CERTS_DIR}/nightwatch.csr" \
+        -CA "$ca_cert" -CAkey "$ca_key" -CAcreateserial \
+        -out "$server_cert" -days 3650 -sha256 \
+        -extfile "${CERTS_DIR}/san.ext" \
+        2>/dev/null
+
+    # Cleanup temporary files
+    rm -f "${CERTS_DIR}/nightwatch.csr" "${CERTS_DIR}/san.ext" "${CERTS_DIR}/nightwatch-ca.srl"
+
+    # Set secure permissions
+    chmod 600 "$ca_key" "$server_key"
+    chmod 644 "$ca_cert" "$server_cert"
+    chown "$USER:$GROUP" "$CERTS_DIR"/*
+
+    log_info "CA certificate: $ca_cert (install this on devices)"
+    log_info "Server certificate: $server_cert"
+}
+
 # Install Python package
 install_python() {
     log_step "Installing Python package..."
@@ -125,8 +203,8 @@ install_python() {
 
     # Install nightwatch
     if [ -f "pyproject.toml" ]; then
-        # Installing from source
-        "$VENV_DIR/bin/pip" install -e .
+        # Installing from source (non-editable for ProtectHome compatibility)
+        "$VENV_DIR/bin/pip" install .
     else
         # Installing from git
         "$VENV_DIR/bin/pip" install git+https://github.com/YOUR_USERNAME/nightwatch.git
@@ -233,8 +311,8 @@ Type=simple
 User=${USER}
 Group=${GROUP}
 WorkingDirectory=${INSTALL_DIR}
-Environment="PATH=${VENV_DIR}/bin:/usr/bin"
-ExecStart=${VENV_DIR}/bin/python -m nightwatch.main
+Environment="PATH=${VENV_DIR}/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ExecStart=${VENV_DIR}/bin/python -m nightwatch
 Restart=always
 RestartSec=5
 StandardOutput=journal
@@ -244,12 +322,19 @@ StandardError=journal
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=${DATA_DIR} ${LOG_DIR}
+ReadWritePaths=${DATA_DIR} ${LOG_DIR} ${CONFIG_DIR} /var/lib/misc
 PrivateTmp=true
+
+# Network capabilities for hotspot management
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE
 
 [Install]
 WantedBy=multi-user.target
 EOF
+
+    # Create dnsmasq lease file with correct ownership
+    touch /var/lib/misc/dnsmasq.leases
+    chown ${USER}:${GROUP} /var/lib/misc/dnsmasq.leases
 
     # Dashboard service (if installed)
     cat > /etc/systemd/system/nightwatch-dashboard.service << EOF
@@ -383,8 +468,11 @@ print_summary() {
     echo "  ${CONFIG_DIR}/config.yaml"
     echo ""
     echo "Dashboard:"
-    echo "  http://${ip}:9530"
-    echo "  http://localhost:9530"
+    echo "  https://${ip}"
+    echo "  https://nightwatch.local"
+    echo ""
+    echo "Note: You'll need to accept the self-signed certificate warning"
+    echo "on first visit to the dashboard."
     echo ""
     echo "Next steps:"
     echo "  1. Edit ${CONFIG_DIR}/config.yaml"
@@ -489,6 +577,7 @@ main() {
     install_dependencies
     create_user
     create_directories
+    generate_certificates
     install_python
     install_config
     install_sounds

@@ -63,7 +63,7 @@ class CaptivePortal:
     host: str = "0.0.0.0"
     port: int = 80
     gateway_ip: str = "192.168.4.1"
-    dashboard_url: str = "http://nightwatch.local:9530/setup"
+    dashboard_url: str = "https://nightwatch.local/setup"
     on_wifi_configured: Any | None = None  # Callback when WiFi is set
 
     _app: FastAPI = field(default=None, init=False)  # type: ignore
@@ -154,6 +154,93 @@ class CaptivePortal:
             return RedirectResponse(
                 url=f"http://{self.gateway_ip}/setup",
                 status_code=302,
+            )
+
+        # ====================================================================
+        # Certificate Download Endpoints
+        # ====================================================================
+
+        @app.get("/api/setup/certificate")
+        async def download_certificate() -> Response:
+            """Download CA certificate for device installation (Android)."""
+            import base64
+            ca_cert_path = Path("/etc/nightwatch/certs/nightwatch-ca.crt")
+            if not ca_cert_path.exists():
+                raise HTTPException(status_code=404, detail="Certificate not found")
+
+            return Response(
+                content=ca_cert_path.read_bytes(),
+                media_type="application/x-x509-ca-cert",
+                headers={
+                    "Content-Disposition": "attachment; filename=nightwatch-ca.crt"
+                }
+            )
+
+        @app.get("/api/setup/certificate.mobileconfig")
+        async def download_ios_profile() -> Response:
+            """Download iOS configuration profile with CA certificate."""
+            import base64
+            import uuid
+            ca_cert_path = Path("/etc/nightwatch/certs/nightwatch-ca.crt")
+            if not ca_cert_path.exists():
+                raise HTTPException(status_code=404, detail="Certificate not found")
+
+            # Read and base64 encode the certificate
+            cert_data = base64.b64encode(ca_cert_path.read_bytes()).decode()
+
+            # Generate unique UUIDs for this profile
+            profile_uuid = str(uuid.uuid4()).upper()
+            cert_uuid = str(uuid.uuid4()).upper()
+
+            # Generate iOS mobileconfig profile
+            profile = f'''<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>PayloadContent</key>
+    <array>
+        <dict>
+            <key>PayloadCertificateFileName</key>
+            <string>nightwatch-ca.crt</string>
+            <key>PayloadContent</key>
+            <data>{cert_data}</data>
+            <key>PayloadDescription</key>
+            <string>Adds the Nightwatch CA certificate for secure dashboard access</string>
+            <key>PayloadDisplayName</key>
+            <string>Nightwatch CA Certificate</string>
+            <key>PayloadIdentifier</key>
+            <string>com.nightwatch.ca.{cert_uuid}</string>
+            <key>PayloadType</key>
+            <string>com.apple.security.root</string>
+            <key>PayloadUUID</key>
+            <string>{cert_uuid}</string>
+            <key>PayloadVersion</key>
+            <integer>1</integer>
+        </dict>
+    </array>
+    <key>PayloadDisplayName</key>
+    <string>Nightwatch Monitor</string>
+    <key>PayloadIdentifier</key>
+    <string>com.nightwatch.profile.{profile_uuid}</string>
+    <key>PayloadOrganization</key>
+    <string>Nightwatch</string>
+    <key>PayloadType</key>
+    <string>Configuration</string>
+    <key>PayloadUUID</key>
+    <string>{profile_uuid}</string>
+    <key>PayloadVersion</key>
+    <integer>1</integer>
+    <key>PayloadDescription</key>
+    <string>Installs the Nightwatch security certificate for secure, warning-free dashboard access.</string>
+</dict>
+</plist>'''
+
+            return Response(
+                content=profile.encode(),
+                media_type="application/x-apple-aspen-config",
+                headers={
+                    "Content-Disposition": "attachment; filename=Nightwatch.mobileconfig"
+                }
             )
 
         # ====================================================================
@@ -698,7 +785,7 @@ def main():
         host=args.host,
         port=args.port,
         gateway_ip="127.0.0.1",  # localhost for dev
-        dashboard_url="http://localhost:9530/setup",
+        dashboard_url="http://localhost:3000/setup",  # Dev mode uses Next.js dev server
         on_wifi_configured=on_wifi_configured,
     )
 

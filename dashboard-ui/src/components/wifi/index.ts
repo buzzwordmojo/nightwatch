@@ -4,4 +4,5 @@ export { ConnectionStatus, type ConnectionState } from "./ConnectionStatus";
 export { HotspotInstructions } from "./HotspotInstructions";
 export { WifiSuccessCard } from "./WifiSuccessCard";
 export { TrustCertCard } from "./TrustCertCard";
+export { CertInstallCard } from "./CertInstallCard";
 export { useWifiSetup, type WifiSetupStep, type WifiSetupState, type WifiSetupActions, type UseWifiSetupOptions } from "./useWifiSetup";

@@ -6,6 +6,7 @@ import { pollForDevice } from "@/lib/ip-scanner";
 
 export type WifiSetupStep =
   | "connect-hotspot"
+  | "install-cert"
   | "select-network"
   | "entering-password"
   | "connecting"
@@ -35,6 +36,8 @@ export interface WifiSetupActions {
   connect: () => Promise<void>;
   retry: () => void;
   goBack: () => void;
+  /** Proceed after user has installed the CA certificate */
+  proceedAfterCertInstall: () => void;
   /** Proceed after user has accepted the self-signed certificate */
   proceedAfterCertTrust: () => void;
   /** Skip directly to searching (for when setup was done via captive portal) */
@@ -52,6 +55,8 @@ export interface UseWifiSetupOptions {
   skipHotspotDetection?: boolean;
   /** Skip device search after connect (for portal page where browser closes) */
   skipDeviceSearch?: boolean;
+  /** Start with certificate installation step (for portal page) */
+  startWithCertInstall?: boolean;
 }
 
 export function useWifiSetup(options: UseWifiSetupOptions = {}): WifiSetupState & WifiSetupActions {
@@ -60,10 +65,18 @@ export function useWifiSetup(options: UseWifiSetupOptions = {}): WifiSetupState 
     autoStart = true,
     skipHotspotDetection = false,
     skipDeviceSearch = false,
+    startWithCertInstall = false,
   } = options;
 
+  // Determine initial step based on options
+  const getInitialStep = (): WifiSetupStep => {
+    if (startWithCertInstall) return "install-cert";
+    if (skipHotspotDetection) return "select-network";
+    return "connect-hotspot";
+  };
+
   const [state, setState] = useState<WifiSetupState>({
-    step: skipHotspotDetection ? "select-network" : "connect-hotspot",
+    step: getInitialStep(),
     networks: [],
     selectedSsid: null,
     password: "",
@@ -311,6 +324,13 @@ export function useWifiSetup(options: UseWifiSetupOptions = {}): WifiSetupState 
     });
   }, []);
 
+  const proceedAfterCertInstall = useCallback(() => {
+    setState((s) => ({
+      ...s,
+      step: "select-network",
+    }));
+  }, []);
+
   const proceedAfterCertTrust = useCallback(() => {
     setState((s) => ({
       ...s,
@@ -365,6 +385,7 @@ export function useWifiSetup(options: UseWifiSetupOptions = {}): WifiSetupState 
     connect,
     retry,
     goBack,
+    proceedAfterCertInstall,
     proceedAfterCertTrust,
     skipToSearch,
   };

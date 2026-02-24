@@ -7,6 +7,7 @@ import {
   NetworkList,
   PasswordInput,
   ConnectionStatus,
+  CertInstallCard,
   useWifiSetup,
 } from "@/components/wifi";
 import { ArrowLeft, RefreshCw, Wifi } from "lucide-react";
@@ -19,13 +20,16 @@ export default function PortalPage() {
     portalUrl: PORTAL_URL,
     deviceId: "Nightwatch",
     autoStart: true,
+    startWithCertInstall: true, // Start with certificate installation
     skipHotspotDetection: true, // Already on hotspot when viewing portal
     skipDeviceSearch: true, // Browser will close after submit
   });
 
-  // Calculate progress percentage (2 steps only: select network, connect)
+  // Calculate progress percentage (3 steps: install cert, select network, connect)
   const getProgress = () => {
     switch (wifi.step) {
+      case "install-cert":
+        return 0;
       case "select-network":
       case "entering-password":
         return 33;
@@ -55,20 +59,26 @@ export default function PortalPage() {
         <div className="space-y-2">
           <Progress value={getProgress()} className="h-2" />
           <p className="text-xs text-muted-foreground text-center">
+            {wifi.step === "install-cert" && "Step 1: Install certificate (optional)"}
             {(wifi.step === "select-network" || wifi.step === "entering-password") &&
-              "Step 1: Select your WiFi"}
-            {wifi.step === "connecting" && "Step 2: Connecting..."}
+              "Step 2: Select your WiFi"}
+            {wifi.step === "connecting" && "Step 3: Connecting..."}
           </p>
         </div>
       )}
 
-      {/* Step 1: Select Network */}
+      {/* Step 1: Install Certificate */}
+      {wifi.step === "install-cert" && (
+        <CertInstallCard onContinue={wifi.proceedAfterCertInstall} />
+      )}
+
+      {/* Step 2: Select Network */}
       {wifi.step === "select-network" && (
         <Card>
           <CardHeader className="pb-4">
             <CardTitle className="flex items-center gap-2 text-lg">
               <span className="flex items-center justify-center w-8 h-8 rounded-full bg-primary/10 text-primary text-sm font-bold">
-                1
+                2
               </span>
               Select Your WiFi
             </CardTitle>
@@ -100,14 +110,14 @@ export default function PortalPage() {
         </Card>
       )}
 
-      {/* Step 1b: Enter Password */}
+      {/* Step 2b: Enter Password */}
       {wifi.step === "entering-password" && (
         <Card>
           <CardHeader className="pb-4">
             <div className="flex items-center justify-between">
               <CardTitle className="flex items-center gap-2 text-lg">
                 <span className="flex items-center justify-center w-8 h-8 rounded-full bg-primary/10 text-primary text-sm font-bold">
-                  1
+                  2
                 </span>
                 Enter Password
               </CardTitle>
@@ -142,13 +152,13 @@ export default function PortalPage() {
         </Card>
       )}
 
-      {/* Step 2: Connecting */}
+      {/* Step 3: Connecting */}
       {wifi.step === "connecting" && (
         <Card>
           <CardHeader className="pb-4">
             <CardTitle className="flex items-center gap-2 text-lg">
               <span className="flex items-center justify-center w-8 h-8 rounded-full bg-primary/10 text-primary text-sm font-bold">
-                2
+                3
               </span>
               Connecting...
             </CardTitle>
@@ -171,17 +181,58 @@ export default function PortalPage() {
       {/* Complete */}
       {wifi.step === "complete" && (
         <Card className="border-green-500/50 bg-green-500/5">
-          <CardContent className="pt-6 text-center">
-            <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-green-500/20 mb-4">
-              <Wifi className="h-6 w-6 text-green-500" />
+          <CardContent className="pt-6 space-y-4">
+            <div className="text-center">
+              <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-green-500/20 mb-4">
+                <Wifi className="h-6 w-6 text-green-500" />
+              </div>
+              <h3 className="text-lg font-semibold text-green-600 dark:text-green-400 mb-2">
+                WiFi Configured!
+              </h3>
+              <p className="text-sm text-muted-foreground">
+                Nightwatch will connect to <strong>{wifi.selectedSsid}</strong>
+              </p>
             </div>
-            <h3 className="text-lg font-semibold text-green-600 dark:text-green-400 mb-2">
-              WiFi Configured!
-            </h3>
-            <p className="text-sm text-muted-foreground">
-              Nightwatch is connecting to <strong>{wifi.selectedSsid}</strong>.
-              This page will close shortly.
-            </p>
+
+            {/* Countdown */}
+            <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-4">
+              {wifi.shutdownCountdown !== null && wifi.shutdownCountdown > 0 ? (
+                <div className="flex items-center gap-3">
+                  <div className="animate-spin h-5 w-5 border-2 border-amber-500 border-t-transparent rounded-full" />
+                  <p className="text-sm text-amber-600 dark:text-amber-400">
+                    Hotspot closing in <strong>{wifi.shutdownCountdown}</strong> seconds...
+                  </p>
+                </div>
+              ) : (
+                <p className="text-sm text-green-600 dark:text-green-400 font-medium">
+                  Hotspot closed. Nightwatch is restarting.
+                </p>
+              )}
+            </div>
+
+            {/* Instructions */}
+            <div className="bg-muted/50 rounded-lg p-4 space-y-3">
+              <p className="text-sm font-medium">Switch to your home WiFi now!</p>
+              <p className="text-sm text-muted-foreground">
+                Go to your phone&apos;s WiFi settings and connect to <strong>{wifi.selectedSsid}</strong>.
+                The setup will complete automatically.
+              </p>
+            </div>
+
+            {/* Proctor Link */}
+            <div className="bg-primary/10 rounded-lg p-4 text-center">
+              <p className="text-xs text-muted-foreground mb-2">
+                Then tap here to find your Nightwatch:
+              </p>
+              <a
+                href="https://buzzwordmojo.github.io/nightwatch/setup/proctor/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-block bg-primary text-primary-foreground px-4 py-2 rounded-lg font-medium text-sm"
+              >
+                Continue Setup
+              </a>
+            </div>
           </CardContent>
         </Card>
       )}
