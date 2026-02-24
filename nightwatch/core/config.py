@@ -190,7 +190,10 @@ class DashboardConfig(BaseModel):
     """Configuration for web dashboard."""
 
     host: str = "0.0.0.0"
-    port: int = Field(default=5000, ge=1, le=65535)
+    port: int = Field(default=443, ge=1, le=65535)
+    ssl_enabled: bool = True
+    ssl_cert_file: str = "/etc/nightwatch/certs/nightwatch.crt"
+    ssl_key_file: str = "/etc/nightwatch/certs/nightwatch.key"
     debug: bool = False
     auth_enabled: bool = False
     auth_username: str = "admin"

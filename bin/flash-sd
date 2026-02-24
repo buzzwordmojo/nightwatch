@@ -9,12 +9,14 @@
 #   1. Flashes Raspberry Pi OS Lite (64-bit, Bookworm) to the SD card
 #   2. Enables SSH for headless boot
 #   3. Sets default credentials (pi/nightwatch)
-#   4. Copies the nightwatch project to /home/pi/nightwatch
-#   5. Creates a convenience install alias
+#   4. Pre-installs hotspot packages (hostapd, dnsmasq, avahi) for offline setup
+#   5. Copies the nightwatch project to /home/pi/nightwatch
+#   6. Sets up auto-install service for remaining components
 #
 # After booting the Pi:
-#   ssh pi@nightwatch.local
-#   cd nightwatch && sudo ./install.sh
+#   - If no WiFi configured: Pi broadcasts "Nightwatch-XXXX" hotspot for setup
+#   - Connect to hotspot, configure WiFi via captive portal
+#   - Once on network, remaining install completes automatically
 
 set -euo pipefail
 
@@ -43,6 +45,29 @@ log_warn()  { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 log_step()  { echo -e "${BLUE}[STEP]${NC} $1"; }
 
+# Check for required tools
+check_dependencies() {
+    local missing=()
+
+    if ! command -v qemu-aarch64-static &>/dev/null; then
+        missing+=("qemu-user-static")
+    fi
+
+    if [ ! -f /proc/sys/fs/binfmt_misc/qemu-aarch64 ]; then
+        missing+=("binfmt-support")
+    fi
+
+    if [ ${#missing[@]} -gt 0 ]; then
+        log_error "Missing dependencies for ARM emulation: ${missing[*]}"
+        echo ""
+        echo "Install with:"
+        echo "  sudo apt install qemu-user-static binfmt-support"
+        echo ""
+        echo "This is required to pre-install packages into the ARM image."
+        exit 1
+    fi
+}
+
 usage() {
     echo "Usage: $0 <device>"
     echo ""
@@ -55,6 +80,8 @@ usage() {
 }
 
 # --- Validation ---
+
+check_dependencies
 
 DEVICE="${1:-}"
 if [ -z "$DEVICE" ]; then
@@ -200,7 +227,54 @@ echo "nightwatch" | sudo tee "$ROOT_MNT/etc/hostname" > /dev/null
 sudo sed -i 's/127\.0\.1\.1.*raspberrypi/127.0.1.1\tnightwatch/' "$ROOT_MNT/etc/hosts"
 log_info "Hostname set to nightwatch (nightwatch.local)"
 
-# --- Step 6: Copy nightwatch project ---
+# --- Step 6: Pre-install hotspot packages ---
+
+log_step "Pre-installing hotspot packages (hostapd, dnsmasq, avahi)..."
+
+# Copy QEMU binary for ARM emulation
+sudo cp /usr/bin/qemu-aarch64-static "$ROOT_MNT/usr/bin/"
+
+# Run apt inside the ARM rootfs using QEMU emulation
+sudo chroot "$ROOT_MNT" /bin/bash -c '
+    export DEBIAN_FRONTEND=noninteractive
+    export LANG=C.UTF-8
+
+    # Update package lists
+    apt-get update -qq
+
+    # Install hotspot dependencies
+    apt-get install -y -qq \
+        hostapd \
+        dnsmasq \
+        avahi-daemon \
+        python3 \
+        python3-pip \
+        python3-venv
+
+    # Disable hostapd/dnsmasq services (nightwatch manages them)
+    systemctl disable hostapd 2>/dev/null || true
+    systemctl disable dnsmasq 2>/dev/null || true
+
+    # Enable avahi for mDNS
+    systemctl enable avahi-daemon
+
+    # Create nightwatch user and directories
+    useradd --system --home-dir /opt/nightwatch --shell /bin/false nightwatch 2>/dev/null || true
+    usermod -aG dialout,audio,netdev nightwatch 2>/dev/null || true
+    mkdir -p /opt/nightwatch /etc/nightwatch /var/lib/nightwatch /var/log/nightwatch
+    chown -R nightwatch:nightwatch /opt/nightwatch /var/lib/nightwatch /var/log/nightwatch
+
+    # Clean up apt cache to save space
+    apt-get clean
+    rm -rf /var/lib/apt/lists/*
+'
+
+# Remove QEMU binary (not needed at runtime)
+sudo rm -f "$ROOT_MNT/usr/bin/qemu-aarch64-static"
+
+log_info "Hotspot packages pre-installed"
+
+# --- Step 7: Copy nightwatch project (needed before pip install) ---
 
 log_step "Copying nightwatch project..."
 
@@ -225,36 +299,97 @@ sudo chown -R 1000:1000 "$DEST"
 
 log_info "Project copied to /home/pi/nightwatch"
 
-# --- Step 7: Auto-install on first boot ---
+# --- Step 8: Install nightwatch Python package ---
 
-log_step "Setting up auto-install on first boot..."
+log_step "Installing nightwatch Python package..."
 
-# Create a one-shot systemd service that runs install.sh on first boot
-sudo tee "$ROOT_MNT/etc/systemd/system/nightwatch-first-boot.service" > /dev/null << 'EOF'
+# Need QEMU again for pip install
+sudo cp /usr/bin/qemu-aarch64-static "$ROOT_MNT/usr/bin/"
+
+sudo chroot "$ROOT_MNT" /bin/bash -c '
+    export DEBIAN_FRONTEND=noninteractive
+
+    # Install additional build dependencies
+    apt-get update -qq
+    apt-get install -y -qq \
+        python3-dev \
+        libzmq3-dev \
+        libasound2-dev \
+        portaudio19-dev \
+        libsndfile1
+
+    # Create venv and install nightwatch
+    python3 -m venv /opt/nightwatch/venv
+    /opt/nightwatch/venv/bin/pip install --upgrade pip wheel
+
+    # Install nightwatch from local source (non-editable for ProtectHome compatibility)
+    cd /home/pi/nightwatch
+    /opt/nightwatch/venv/bin/pip install .
+
+    # Copy default config if not exists
+    if [ ! -f /etc/nightwatch/config.yaml ]; then
+        cp /home/pi/nightwatch/config/default.yaml /etc/nightwatch/config.yaml
+        chmod 640 /etc/nightwatch/config.yaml
+    fi
+
+    # Fix ownership
+    chown -R nightwatch:nightwatch /opt/nightwatch /var/lib/nightwatch /var/log/nightwatch
+
+    # Clean up apt cache
+    apt-get clean
+    rm -rf /var/lib/apt/lists/*
+'
+
+sudo rm -f "$ROOT_MNT/usr/bin/qemu-aarch64-static"
+
+log_info "Nightwatch package installed"
+
+# --- Step 9: Install systemd services ---
+
+log_step "Installing systemd services..."
+
+# Main nightwatch service
+sudo tee "$ROOT_MNT/etc/systemd/system/nightwatch.service" > /dev/null << 'EOF'
 [Unit]
-Description=Nightwatch First Boot Installer
-After=network-online.target
-Wants=network-online.target
-ConditionPathExists=!/opt/nightwatch/.installed
+Description=Nightwatch Epilepsy Monitor
+After=network.target
 
 [Service]
-Type=oneshot
-ExecStart=/bin/bash -c 'cd /home/pi/nightwatch && ./install.sh 2>&1 | tee /var/log/nightwatch-install.log && touch /opt/nightwatch/.installed'
-RemainAfterExit=yes
+Type=simple
+User=nightwatch
+Group=nightwatch
+WorkingDirectory=/opt/nightwatch
+Environment="PATH=/opt/nightwatch/venv/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ExecStart=/opt/nightwatch/venv/bin/python -m nightwatch
+Restart=always
+RestartSec=5
 StandardOutput=journal
 StandardError=journal
-TimeoutStartSec=600
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/nightwatch /var/log/nightwatch /etc/nightwatch /var/lib/misc
+PrivateTmp=true
+
+# Network capabilities for hotspot management
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-# Enable the service (symlink into multi-user.target.wants)
-sudo mkdir -p "$ROOT_MNT/etc/systemd/system/multi-user.target.wants"
-sudo ln -sf /etc/systemd/system/nightwatch-first-boot.service \
-    "$ROOT_MNT/etc/systemd/system/multi-user.target.wants/nightwatch-first-boot.service"
+# Create dnsmasq lease file with correct ownership
+sudo touch "$ROOT_MNT/var/lib/misc/dnsmasq.leases"
+sudo chown 1001:1001 "$ROOT_MNT/var/lib/misc/dnsmasq.leases"  # nightwatch user
 
-log_info "Auto-install service enabled"
+# Enable nightwatch service
+sudo mkdir -p "$ROOT_MNT/etc/systemd/system/multi-user.target.wants"
+sudo ln -sf /etc/systemd/system/nightwatch.service \
+    "$ROOT_MNT/etc/systemd/system/multi-user.target.wants/nightwatch.service"
+
+log_info "Systemd services installed"
 
 # Add a helpful MOTD
 sudo tee "$ROOT_MNT/etc/motd" > /dev/null << 'EOF'
@@ -266,9 +401,14 @@ sudo tee "$ROOT_MNT/etc/motd" > /dev/null << 'EOF'
  |_| \_|_|\__, |_| |_|\__| \_/\_/ \__,_|\__\___|_| |_|
           |___/
 
- Nightwatch auto-installs on first boot.
- Check progress:  sudo journalctl -u nightwatch-first-boot -f
- Install log:     /var/log/nightwatch-install.log
+ Nightwatch is pre-installed and starts automatically!
+
+ If WiFi is not configured, look for hotspot: Nightwatch-XXXX
+ Connect to configure WiFi, then monitoring begins automatically.
+
+ Commands:
+   sudo journalctl -u nightwatch -f    # View logs
+   sudo systemctl status nightwatch    # Check status
 
 EOF
 
@@ -285,12 +425,14 @@ echo "=========================================="
 echo "  SD Card Ready!"
 echo "=========================================="
 echo ""
-echo "Next steps:"
-echo "  1. Put the SD card in the Pi and power on"
-echo "  2. Nightwatch will auto-install on first boot (~5-10 min)"
-echo "  3. SSH in:  ssh pi@nightwatch.local"
-echo "     Password: ${PI_PASS}"
-echo "  4. Check install progress: sudo journalctl -u nightwatch-first-boot -f"
+echo "What happens on boot:"
+echo "  1. If WiFi not configured → broadcasts 'Nightwatch-XXXX' hotspot"
+echo "  2. Connect to hotspot → captive portal for WiFi setup"
+echo "  3. After WiFi configured → nightwatch starts monitoring"
 echo ""
-echo "Once installed, the dashboard will be at http://nightwatch.local:9530"
+echo "Or connect via ethernet and SSH:"
+echo "  ssh pi@nightwatch.local"
+echo "  Password: ${PI_PASS}"
+echo ""
+echo "Dashboard: http://nightwatch.local:5000"
 echo ""

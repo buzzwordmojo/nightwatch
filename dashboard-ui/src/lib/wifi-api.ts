@@ -1,6 +1,6 @@
 /**
  * WiFi API client for communicating with the Nightwatch portal and dashboard.
- * Works with both the captive portal (192.168.4.1) and dashboard (nightwatch.local:9530).
+ * Works with both the captive portal (http://192.168.4.1) and dashboard (https://nightwatch.local).
  */
 
 export interface Network {

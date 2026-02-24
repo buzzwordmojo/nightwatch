@@ -7,8 +7,6 @@
 
 import { checkHealth } from "./wifi-api";
 
-const DASHBOARD_PORT = 9530;
-
 // Common home network IP ranges
 const COMMON_RANGES = [
   "192.168.86", // Google WiFi / Nest
@@ -20,6 +18,7 @@ const COMMON_RANGES = [
 
 /**
  * Generate list of possible device IPs to scan.
+ * Uses HTTPS on port 443 (standard HTTPS port).
  */
 function generatePossibleIPs(): string[] {
   const ips: string[] = [];
@@ -27,7 +26,7 @@ function generatePossibleIPs(): string[] {
   for (const range of COMMON_RANGES) {
     // Scan common DHCP range (2-100)
     for (let host = 2; host <= 100; host++) {
-      ips.push(`http://${range}.${host}:${DASHBOARD_PORT}`);
+      ips.push(`https://${range}.${host}`);
     }
   }
 
@@ -37,9 +36,22 @@ function generatePossibleIPs(): string[] {
 /**
  * Try to reach a single IP and return it if successful.
  */
-async function tryIP(url: string, timeoutMs: number = 1000): Promise<string | null> {
-  const health = await checkHealth(url, timeoutMs);
-  return health ? url : null;
+async function tryIP(
+  url: string,
+  timeoutMs: number = 1000,
+  onDebug?: (msg: string) => void
+): Promise<string | null> {
+  try {
+    const health = await checkHealth(url, timeoutMs);
+    if (health) {
+      onDebug?.(`✓ Found device at ${url}`);
+      return url;
+    }
+    return null;
+  } catch (error) {
+    onDebug?.(`✗ ${url}: ${error instanceof Error ? error.message : 'failed'}`);
+    return null;
+  }
 }
 
 /**
@@ -59,6 +71,8 @@ export interface ScanOptions {
   onProgress?: (scanned: number, total: number) => void;
   /** Signal to abort scanning */
   signal?: AbortSignal;
+  /** Debug callback for logging */
+  onDebug?: (msg: string) => void;
 }
 
 export interface ScanResult {
@@ -78,37 +92,54 @@ export async function discoverDevice(options: ScanOptions = {}): Promise<ScanRes
     batchSize = 20,
     onProgress,
     signal,
+    onDebug,
   } = options;
 
-  // First, try mDNS
-  const mdnsUrl = `http://nightwatch.local:${DASHBOARD_PORT}`;
-  const mdnsResult = await checkHealth(mdnsUrl, 2000);
+  // First, try mDNS (HTTPS on standard port)
+  const mdnsUrl = `https://nightwatch.local`;
+  onDebug?.(`Trying mDNS: ${mdnsUrl}`);
 
-  if (mdnsResult) {
-    return { found: true, url: mdnsUrl, scanned: 0 };
+  try {
+    const mdnsResult = await checkHealth(mdnsUrl, 2000);
+    if (mdnsResult) {
+      onDebug?.(`✓ Found via mDNS: ${mdnsUrl}`);
+      return { found: true, url: mdnsUrl, scanned: 0 };
+    }
+    onDebug?.(`✗ mDNS failed (no response)`);
+  } catch (error) {
+    onDebug?.(`✗ mDNS error: ${error instanceof Error ? error.message : 'unknown'}`);
   }
 
   // Fall back to IP scanning
   const possibleIPs = generatePossibleIPs();
   let scanned = 0;
+  onDebug?.(`Starting IP scan (${possibleIPs.length} IPs, batch size ${batchSize})`);
 
   for (let i = 0; i < possibleIPs.length; i += batchSize) {
     // Check if aborted
     if (signal?.aborted) {
+      onDebug?.(`Scan aborted at ${scanned} IPs`);
       return { found: false, url: null, scanned };
     }
 
     const batch = possibleIPs.slice(i, i + batchSize);
-    const found = await scanBatch(batch, timeoutMs);
+
+    // Scan batch with debug logging for first batch only (to avoid spam)
+    const results = await Promise.all(
+      batch.map((url) => tryIP(url, timeoutMs, i === 0 ? onDebug : undefined))
+    );
+    const found = results.find((result) => result !== null) || null;
 
     scanned += batch.length;
     onProgress?.(scanned, possibleIPs.length);
 
     if (found) {
+      onDebug?.(`✓ Found device at ${found}`);
       return { found: true, url: found, scanned };
     }
   }
 
+  onDebug?.(`✗ Scan complete, device not found (scanned ${scanned} IPs)`);
   return { found: false, url: null, scanned };
 }
 
