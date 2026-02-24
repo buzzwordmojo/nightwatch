@@ -55,7 +55,7 @@ pip install -e .
 
 ### Dashboard
 
-Open **http://localhost:9530** for the web dashboard.
+Open **http://localhost:3000** for the dev dashboard or **https://nightwatch.local** in production.
 
 ## Project Structure
 
@@ -201,8 +201,9 @@ npm run dev                        # Next.js dev server
 ```
 
 **Services:**
-- Dashboard: http://localhost:9530 (Next.js with hot-reload)
+- Dashboard: http://localhost:3000 (Next.js with hot-reload)
 - Backend: http://localhost:9531 (Python API + mock sensors)
+- Production: https://nightwatch.local (HTTPS on port 443)
 - Convex: http://localhost:3210 (real-time database)
 - Simulator: http://localhost:9531/sim (trigger test scenarios)
 

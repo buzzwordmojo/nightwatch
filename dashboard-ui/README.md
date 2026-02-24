@@ -49,7 +49,7 @@ NEXT_PUBLIC_API_URL=http://localhost:9531
 npm run dev
 ```
 
-Dashboard will be available at: **http://localhost:9530**
+Dashboard will be available at: **http://localhost:3000** (dev) or **https://nightwatch.local** (production)
 
 ## Running with Python Backend
 
@@ -128,7 +128,7 @@ dashboard-ui/
 For monitoring while away from home, you can use Tailscale:
 
 1. Install Tailscale on the Pi and your phone
-2. Access dashboard via Tailscale IP: `http://100.x.x.x:9530`
+2. Access dashboard via Tailscale IP: `https://100.x.x.x` (accept the cert warning)
 
 See main project docs for detailed Tailscale setup.
 
@@ -190,6 +190,66 @@ Then run `npx convex dev --once` to deploy.
 - After `docker compose down -v` (Convex volume reset)
 - After editing files in `convex/` directory
 - First time setup
+
+## WiFi Setup Flow
+
+The dashboard includes a WiFi setup system for initial device configuration. This allows users to configure their Nightwatch's WiFi connection using their phone.
+
+### How It Works
+
+1. **User scans QR code** → Opens proctor page with device ID:
+   ```
+   https://buzzwordmojo.github.io/nightwatch/setup/proctor/?id=Nightwatch-A17D
+   ```
+
+2. **Proctor page** shows instructions to connect to the device's hotspot (e.g., `Nightwatch-A17D`)
+
+3. **User connects to hotspot** → Phone's captive portal opens the React setup wizard at `http://192.168.4.1/setup`
+
+4. **User selects home WiFi** and enters password → Credentials saved to Pi
+
+5. **Hotspot shuts down** (15 second countdown) → Phone falls back to home WiFi
+
+6. **Proctor page resumes** → Searches for the device on the local network
+
+7. **Device found** → User is redirected to the dashboard
+
+### Pages
+
+| Page | URL | Purpose |
+|------|-----|---------|
+| Proctor | `/proctor?id=<SSID>` | Cloud-hosted setup guide (GitHub Pages) |
+| Portal | `/portal` | Captive portal on Pi hotspot |
+
+### QR Code Generation
+
+Generate a QR code for your device using the MAC address suffix:
+
+```bash
+# Get MAC suffix
+ssh pi@nightwatch.local "cat /sys/class/net/wlan0/address"
+# Example: 2c:cf:67:aa:a1:7d → suffix is A17D
+
+# QR code URL
+https://api.qrserver.com/v1/create-qr-code/?size=400x400&data=https://buzzwordmojo.github.io/nightwatch/setup/proctor/?id=Nightwatch-A17D
+```
+
+### Build Commands
+
+```bash
+# Build proctor for GitHub Pages (with basePath)
+npm run build:proctor
+
+# Build portal for Pi captive portal (no basePath)
+npm run build:portal
+```
+
+### Deployment
+
+Portal files deploy to:
+```
+/opt/nightwatch/venv/lib/python3.11/site-packages/nightwatch/setup/wizard/react/
+```
 
 ## Building for Production
 
