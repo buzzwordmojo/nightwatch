@@ -176,6 +176,40 @@ class ConvexBridge:
             logger.error(f"Failed to update system status: {e}")
             return False
 
+    async def push_radar_signal(
+        self,
+        x: int,
+        y: int,
+        distance: float,
+    ) -> bool:
+        """
+        Push raw radar signal data for visualization.
+
+        Called at ~11 Hz for real-time signal charts.
+
+        Args:
+            x: X position in mm (horizontal)
+            y: Y position in mm (depth/distance)
+            distance: Computed distance in meters
+
+        Returns:
+            True if successful
+        """
+        if not self._client or not self._running:
+            return False
+
+        try:
+            await self._mutation("vitals:insertRadarSignal", {
+                "x": x,
+                "y": y,
+                "distance": distance,
+            })
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to push radar signal: {e}")
+            return False
+
     async def _update_detector_state(self, event: Event) -> None:
         """Update detector state in Convex."""
         state_str = self._event_state_to_string(event.state)
@@ -307,3 +341,11 @@ class ConvexEventHandler:
     async def __call__(self, event: Event) -> None:
         """Handle an event by pushing to Convex."""
         await self._bridge.push_event(event)
+
+        # Push raw radar signal data for visualization (at full 11 Hz rate)
+        if event.detector == "radar":
+            x = event.value.get("x")
+            y = event.value.get("y")
+            distance = event.value.get("target_distance")
+            if x is not None and y is not None and distance is not None:
+                await self._bridge.push_radar_signal(x, y, distance)

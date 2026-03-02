@@ -421,6 +421,98 @@ Pros: Very accurate weight/movement
 Cons: More complex installation, 4 sensors needed
 ```
 
+### Alternative: Capacitive Sensors (Aluminum Foil)
+
+Uses aluminum foil plates as capacitive sensors. The body acts as one plate of a capacitor; micro-movements from heartbeats cause tiny capacitance changes detected by a CDC chip.
+
+**Technical Specifications:**
+
+```
+Sensor:             Aluminum foil plates (~10cm x 10cm each)
+CDC Chip:           FDC1004 (Texas Instruments)
+Channels:           4 independent (expandable to 8 with 2 chips)
+Resolution:         ±0.5 fF
+Range:              ±15 pF (configurable)
+Interface:          I2C (address 0x50, configurable)
+Sample rate:        Up to 400 Hz
+Voltage:            3.3V
+```
+
+**System Diagram:**
+
+```
+┌─────────────┐    ┌─────────────┐    ┌──────────┐
+│  Foil Pad 1 │───►│             │    │          │
+│  Foil Pad 2 │───►│   FDC1004   │───►│ Pi GPIO  │
+│  Foil Pad 3 │───►│   (I2C)     │    │ SDA/SCL  │
+│  Foil Pad 4 │───►│             │    │          │
+└─────────────┘    └─────────────┘    └──────────┘
+```
+
+**Wiring (FDC1004 to Raspberry Pi):**
+
+```
+FDC1004         Raspberry Pi 5
+────────        ──────────────
+VIN      ─────► 3.3V (Pin 1)
+GND      ─────► GND (Pin 6)
+SDA      ─────► GPIO 2 / SDA (Pin 3)
+SCL      ─────► GPIO 3 / SCL (Pin 5)
+```
+
+**Sensor Placement:**
+
+```
+TOP VIEW OF BED
+
+    ┌─────────────────────────────────┐
+    │           (head)                │
+    │                                 │
+    │    ┌───┐  ┌───┐  ┌───┐  ┌───┐  │
+    │    │ 1 │  │ 2 │  │ 3 │  │ 4 │  │  ◄── Foil plates (~10cm x 10cm)
+    │    └───┘  └───┘  └───┘  └───┘  │      under torso/chest area
+    │         (chest area)            │
+    │                                 │
+    └─────────────────────────────────┘
+
+SIDE VIEW
+
+    ┌─────────────────────────────────┐
+    │           MATTRESS              │
+    └─────────────────────────────────┘
+    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ Plastic insulation sheet
+    ┃ ▓▓▓▓  ▓▓▓▓  ▓▓▓▓  ▓▓▓▓ ┃        Foil plates (spaced ~5cm apart)
+    ═══════════════════════════════════ Box spring/slats
+```
+
+**Construction Notes:**
+
+- Cut foil plates ~10cm x 10cm (larger = more sensitivity, less position resolution)
+- Place on thin insulating sheet (plastic, paper) to isolate from bed frame
+- Use shielded cable from plates to FDC1004 to reduce noise
+- Space plates ~5cm apart under chest area
+- Tape foil flat to prevent crinkle noise
+
+**Expected Performance:**
+
+| Metric | Expected | Notes |
+|--------|----------|-------|
+| Heart rate accuracy | TBD | Experimental - needs testing |
+| Signal quality | Variable | Depends on plate size/placement |
+| Bed occupancy | Good | Large capacitance change when lying down |
+| Position sensing | 4 zones | Can tell which plates have strongest signal |
+
+**Pros:**
+- Very cheap (~$15 total)
+- Multiple channels for position info
+- No amplifier circuit needed (digital output)
+- Simple I2C wiring
+
+**Cons:**
+- Experimental / less proven than piezo
+- May be sensitive to environmental changes (humidity)
+- Requires tuning for optimal performance
+
 ---
 
 ## Sensor Fusion Strategy

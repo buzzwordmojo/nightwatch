@@ -53,16 +53,76 @@ const TIME_RANGES = [
   { label: "8h", minutes: 480 },
 ];
 
+// Downsample data by averaging readings within time buckets
+function downsampleData(data: Reading[], bucketSizeMs: number): Reading[] {
+  if (data.length === 0) return [];
+
+  const buckets = new Map<number, Reading[]>();
+
+  // Group readings into buckets
+  for (const reading of data) {
+    const bucketKey = Math.floor(reading.timestamp / bucketSizeMs) * bucketSizeMs;
+    if (!buckets.has(bucketKey)) {
+      buckets.set(bucketKey, []);
+    }
+    buckets.get(bucketKey)!.push(reading);
+  }
+
+  // Average each bucket
+  const result: Reading[] = [];
+  for (const [timestamp, readings] of buckets) {
+    const avg: Reading = { timestamp };
+
+    const respRates = readings.filter(r => r.respirationRate != null).map(r => r.respirationRate!);
+    if (respRates.length > 0) {
+      avg.respirationRate = respRates.reduce((a, b) => a + b, 0) / respRates.length;
+    }
+
+    const heartRates = readings.filter(r => r.heartRate != null).map(r => r.heartRate!);
+    if (heartRates.length > 0) {
+      avg.heartRate = heartRates.reduce((a, b) => a + b, 0) / heartRates.length;
+    }
+
+    const amplitudes = readings.filter(r => r.breathingAmplitude != null).map(r => r.breathingAmplitude!);
+    if (amplitudes.length > 0) {
+      avg.breathingAmplitude = amplitudes.reduce((a, b) => a + b, 0) / amplitudes.length;
+    }
+
+    const movements = readings.filter(r => r.movement != null || r.signalQuality != null)
+      .map(r => r.movement ?? r.signalQuality!);
+    if (movements.length > 0) {
+      avg.movement = movements.reduce((a, b) => a + b, 0) / movements.length;
+    }
+
+    result.push(avg);
+  }
+
+  return result.sort((a, b) => a.timestamp - b.timestamp);
+}
+
 export function VitalsChart({ data }: VitalsChartProps) {
   const [timeRange, setTimeRange] = useState(5); // Default to 5 minutes
   const chartRef = useRef<ChartJS<"line">>(null);
 
-  // Filter data based on selected time range
+  // Filter and optionally downsample data based on selected time range
   const filteredData = (() => {
     if (!data || data.length === 0) return [];
     const now = Date.now();
     const cutoff = now - timeRange * 60 * 1000;
-    return data.filter((r) => r.timestamp >= cutoff);
+    const rangeData = data.filter((r) => r.timestamp >= cutoff);
+
+    // Downsample for longer time ranges to keep chart performant
+    // >15 min: 1 sample per minute
+    // >1 hour: 1 sample per 5 minutes
+    // >4 hours: 1 sample per 15 minutes
+    if (timeRange > 240) {
+      return downsampleData(rangeData, 15 * 60 * 1000); // 15-minute buckets
+    } else if (timeRange > 60) {
+      return downsampleData(rangeData, 5 * 60 * 1000); // 5-minute buckets
+    } else if (timeRange > 15) {
+      return downsampleData(rangeData, 60 * 1000); // 1-minute buckets
+    }
+    return rangeData;
   })();
 
   // Transform data for Chart.js
@@ -110,6 +170,20 @@ export function VitalsChart({ data }: VitalsChartProps) {
         borderWidth: 2,
         yAxisID: "y2",
       },
+      {
+        label: "Audio Level",
+        data: filteredData.map((r) => ({
+          x: r.timestamp,
+          y: r.breathingAmplitude ?? null,
+        })),
+        borderColor: "#f59e0b",
+        backgroundColor: "rgba(245, 158, 11, 0.15)",
+        fill: true,
+        tension: 0.2,
+        pointRadius: 0,
+        borderWidth: 1.5,
+        yAxisID: "y2",
+      },
     ],
   };
 
@@ -137,6 +211,8 @@ export function VitalsChart({ data }: VitalsChartProps) {
             if (val === null) return "";
             if (label.includes("Movement"))
               return "Movement: " + (val * 100).toFixed(0) + "%";
+            if (label.includes("Audio"))
+              return "Audio: " + (val * 100).toFixed(0) + "%";
             return label.split(" ")[0] + ": " + val.toFixed(1) + " BPM";
           },
         },
@@ -221,7 +297,7 @@ export function VitalsChart({ data }: VitalsChartProps) {
         </div>
 
         {/* Legend */}
-        <div className="flex justify-center gap-6 text-sm text-muted-foreground">
+        <div className="flex justify-center gap-4 text-sm text-muted-foreground flex-wrap">
           <span className="flex items-center gap-2">
             <span className="w-2.5 h-2.5 rounded-full bg-[#3b82f6]" />
             Breathing
@@ -233,6 +309,10 @@ export function VitalsChart({ data }: VitalsChartProps) {
           <span className="flex items-center gap-2">
             <span className="w-2.5 h-2.5 rounded-full bg-[#10b981]" />
             Movement
+          </span>
+          <span className="flex items-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-full bg-[#f59e0b]" />
+            Audio
           </span>
         </div>
       </div>
@@ -268,7 +348,7 @@ export function VitalsChart({ data }: VitalsChartProps) {
       </div>
 
       {/* Legend */}
-      <div className="flex justify-center gap-6 text-sm text-muted-foreground">
+      <div className="flex justify-center gap-4 text-sm text-muted-foreground flex-wrap">
         <span className="flex items-center gap-2">
           <span className="w-2.5 h-2.5 rounded-full bg-[#3b82f6]" />
           Breathing
@@ -280,6 +360,10 @@ export function VitalsChart({ data }: VitalsChartProps) {
         <span className="flex items-center gap-2">
           <span className="w-2.5 h-2.5 rounded-full bg-[#10b981]" />
           Movement
+        </span>
+        <span className="flex items-center gap-2">
+          <span className="w-2.5 h-2.5 rounded-full bg-[#f59e0b]" />
+          Audio
         </span>
       </div>
     </div>

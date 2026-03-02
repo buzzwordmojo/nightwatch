@@ -5,7 +5,10 @@ import { VitalCard } from "@/components/dashboard/VitalCard";
 import { StatusIndicator } from "@/components/dashboard/StatusIndicator";
 import { AlertBanner } from "@/components/dashboard/AlertBanner";
 import { VitalsChart } from "@/components/dashboard/VitalsChart";
-import { Heart, Wind, Activity, Moon } from "lucide-react";
+import { AudioLevelMeter } from "@/components/dashboard/AudioLevelMeter";
+import { SensorStatusBar } from "@/components/dashboard/SensorStatusBar";
+import { Heart, Wind, Activity, Moon, Settings } from "lucide-react";
+import Link from "next/link";
 import { formatTime } from "@/lib/utils";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -38,21 +41,34 @@ export function DashboardView({
         <div className="flex items-center gap-3">
           <Moon className="h-8 w-8 text-primary" />
           <div>
-            <h1 className="text-2xl font-bold">Nightwatch</h1>
+            <h1 className="text-2xl font-bold">Nightwatch <span className="text-xs text-muted-foreground">v2</span></h1>
             <p className="text-sm text-muted-foreground">
               {vitals
                 ? `Last update: ${formatTime(vitals.timestamp)}`
                 : "Connecting..."}
             </p>
           </div>
+          <div className="hidden sm:block border-l pl-3 ml-1">
+            <SensorStatusBar detectors={vitals?.detectorStatus} />
+          </div>
         </div>
 
         <div className="flex items-center gap-4">
+          <div className="sm:hidden">
+            <SensorStatusBar detectors={vitals?.detectorStatus} />
+          </div>
           <StatusIndicator
             status={systemHealth?.overall ?? "offline"}
             label="System"
           />
           {headerExtra}
+          <Link
+            href="/settings/audio"
+            className="p-2 rounded-md hover:bg-muted transition-colors"
+            title="Settings"
+          >
+            <Settings className="h-5 w-5 text-muted-foreground" />
+          </Link>
         </div>
       </header>
 
@@ -122,6 +138,13 @@ export function DashboardView({
       {/* Chart */}
       <div className="rounded-lg border bg-card p-6">
         <VitalsChart data={readings ?? []} />
+      </div>
+
+      {/* Audio Level Meter */}
+      <div className="mt-4 rounded-lg border bg-card p-4">
+        <AudioLevelMeter
+          level={vitals?.detectors?.audio?.value?.breathing_amplitude ?? 0}
+        />
       </div>
 
       {/* Detector Status */}

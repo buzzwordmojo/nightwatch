@@ -178,6 +178,9 @@ class RadarDetector(BaseDetector):
             "presence": self._presence,
             "target_distance": round(self._last_target.distance_m, 2) if self._last_target else None,
             "target_angle": round(self._last_target.angle_degrees, 1) if self._last_target else None,
+            # Raw position data for visualization (in mm)
+            "x": self._last_target.x if self._last_target else None,
+            "y": self._last_target.y if self._last_target else None,
         }
 
         await self._emit_event(state, confidence, value)
@@ -372,6 +375,10 @@ class MockRadarDetector(RadarDetector):
         elif respiration_rate < 8:
             state = EventState.WARNING
 
+        # Get current mock target position
+        mock_x = self._last_target.x if self._last_target else 0
+        mock_y = self._last_target.y if self._last_target else int(self._base_distance * 1000)
+
         value = {
             "respiration_rate": round(respiration_rate, 1),
             "respiration_amplitude": 0.8,
@@ -381,6 +388,9 @@ class MockRadarDetector(RadarDetector):
             "presence": True,
             "target_distance": round(self._base_distance, 2),
             "target_angle": 0.0,
+            # Raw position data for visualization (in mm)
+            "x": mock_x,
+            "y": mock_y,
         }
 
         await self._emit_event(state, confidence, value)

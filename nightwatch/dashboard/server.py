@@ -17,10 +17,11 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request, Response
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import uvicorn
+import httpx
 
 from nightwatch.core.config import DashboardConfig
 from nightwatch.core.events import Event, Alert, EventBuffer
@@ -140,7 +141,11 @@ class DashboardServer:
 
     def _setup_routes(self) -> None:
         """Configure all routes."""
-        # Static files and templates
+        # Next.js build directory (standalone build with pre-rendered HTML)
+        self._nextjs_dir = Path("/opt/nightwatch/dashboard/.next/server/app")
+        self._nextjs_static = Path("/opt/nightwatch/dashboard/.next/static")
+
+        # Legacy static files and templates
         static_dir = Path(__file__).parent / "static"
         templates_dir = Path(__file__).parent / "templates"
 
@@ -185,6 +190,26 @@ class DashboardServer:
         self._app.post("/api/setup/name")(self._setup_name)
         self._app.post("/api/setup/notifications")(self._setup_notifications)
 
+        # Audio settings
+        self._app.post("/api/audio/apply-settings")(self._apply_audio_settings)
+        self._app.get("/api/audio/settings")(self._get_audio_settings)
+
+        # Serve Next.js static export pages
+        self._app.get("/settings")(self._serve_nextjs_page)
+        self._app.get("/settings/{path:path}")(self._serve_nextjs_page)
+        self._app.get("/setup")(self._serve_nextjs_page)
+        self._app.get("/setup/{path:path}")(self._serve_nextjs_page)
+
+        # Mount Next.js static assets (_next/static directory)
+        if self._nextjs_static.exists():
+            self._app.mount("/_next/static", StaticFiles(directory=self._nextjs_static), name="nextjs_static")
+
+        # Convex proxy routes (HTTPS termination for browser connections)
+        self._convex_url = "http://localhost:3210"
+        self._convex_client: httpx.AsyncClient | None = None
+        self._app.api_route("/convex/{path:path}", methods=["GET", "POST", "OPTIONS"])(self._proxy_convex)
+        self._app.websocket("/convex/{path:path}")(self._proxy_convex_ws)
+
     # ========================================================================
     # Health Check
     # ========================================================================
@@ -201,16 +226,134 @@ class DashboardServer:
     # Page Routes
     # ========================================================================
 
-    async def _get_index(self, request: Request) -> HTMLResponse:
-        """Serve main dashboard page."""
-        if self._templates:
-            return self._templates.TemplateResponse(
-                "index.html",
-                {"request": request, "state": self._current_state}
-            )
+    async def _get_index(self, request: Request) -> Response:
+        """Serve main dashboard page from Next.js static export."""
+        return await self._serve_nextjs_page(request)
+
+    async def _serve_nextjs_page(self, request: Request, path: str = "") -> Response:
+        """Serve a page from the Next.js static export."""
+        # Get the path from the request
+        url_path = request.url.path.strip("/")
+        if not url_path:
+            url_path = "index"
+
+        # Try to find the HTML file
+        html_file = self._nextjs_dir / f"{url_path}.html"
+        if not html_file.exists():
+            # Try as directory with index.html
+            html_file = self._nextjs_dir / url_path / "index.html"
+        if not html_file.exists():
+            # Fallback to index.html for client-side routing
+            html_file = self._nextjs_dir / "index.html"
+
+        if html_file.exists():
+            return HTMLResponse(content=html_file.read_text())
         else:
-            # Return inline HTML if no templates
+            # Fallback to inline HTML if no static export
             return HTMLResponse(content=self._get_inline_html())
+
+    async def _proxy_convex(self, request: Request, path: str) -> Response:
+        """Proxy HTTP requests to Convex backend."""
+        if not self._convex_client:
+            self._convex_client = httpx.AsyncClient(timeout=30.0)
+
+        url = f"{self._convex_url}/{path}"
+
+        # Handle CORS preflight
+        if request.method == "OPTIONS":
+            return Response(
+                status_code=200,
+                headers={
+                    "Access-Control-Allow-Origin": "*",
+                    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                    "Access-Control-Allow-Headers": "Content-Type, Convex-Client",
+                },
+            )
+
+        try:
+            body = await request.body()
+            resp = await self._convex_client.request(
+                method=request.method,
+                url=url,
+                content=body,
+                headers={
+                    k: v for k, v in request.headers.items()
+                    if k.lower() not in ("host", "content-length")
+                },
+            )
+
+            return Response(
+                content=resp.content,
+                status_code=resp.status_code,
+                headers={
+                    k: v for k, v in resp.headers.items()
+                    if k.lower() not in ("transfer-encoding", "content-encoding")
+                },
+            )
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=502)
+
+    async def _proxy_convex_ws(self, websocket: WebSocket, path: str):
+        """Proxy WebSocket connections to Convex backend."""
+        import websockets
+        import logging
+
+        logger = logging.getLogger(__name__)
+        await websocket.accept()
+        convex_ws_url = self._convex_url.replace("http", "ws") + "/" + path
+        print(f"[WS] Connecting to Convex at {convex_ws_url}", flush=True)
+
+        try:
+            async with websockets.connect(convex_ws_url) as convex_ws:
+                print(f"[WS] Connected to Convex backend", flush=True)
+                client_closed = False
+                convex_closed = False
+                msg_count = [0, 0]  # [to_convex, to_client]
+
+                async def forward_to_convex():
+                    nonlocal client_closed
+                    try:
+                        async for message in websocket.iter_text():
+                            if convex_closed:
+                                break
+                            msg_count[0] += 1
+                            if msg_count[0] <= 3:
+                                print(f"[WS] Client->Convex #{msg_count[0]}: {message[:100]}...")
+                            await convex_ws.send(message)
+                    except Exception as e:
+                        print(f"[WS] forward_to_convex error: {e}")
+                    finally:
+                        client_closed = True
+
+                async def forward_to_client():
+                    nonlocal convex_closed
+                    try:
+                        async for message in convex_ws:
+                            if client_closed:
+                                break
+                            msg_count[1] += 1
+                            if msg_count[1] <= 3:
+                                print(f"[WS] Convex->Client #{msg_count[1]}: {message[:100]}...")
+                            await websocket.send_text(message)
+                    except Exception as e:
+                        print(f"[WS] forward_to_client error: {e}")
+                    finally:
+                        convex_closed = True
+
+                await asyncio.gather(forward_to_convex(), forward_to_client(), return_exceptions=True)
+                print(f"[WS] Connection closed. Messages: {msg_count[0]} to Convex, {msg_count[1]} to client")
+        except websockets.exceptions.InvalidStatusCode as e:
+            logger.error(f"Convex WebSocket connection rejected: {e}")
+            try:
+                await websocket.close(code=1011, reason=f"Convex rejected: {e}")
+            except Exception:
+                pass
+        except Exception as e:
+            logger.error(f"Convex WebSocket error: {e}")
+            try:
+                await websocket.close(code=1011, reason=str(e)[:120])
+            except Exception:
+                pass
 
     def _get_inline_html(self) -> str:
         """Generate inline HTML for dashboard."""
@@ -803,8 +946,48 @@ class DashboardServer:
     # API Routes
     # ========================================================================
 
+    def _get_detector_status(self) -> dict[str, Any]:
+        """Get status of all detectors."""
+        status = {}
+        for name, detector in self._detectors.items():
+            entry: dict[str, Any] = {
+                "connected": False,
+                "status": "offline",
+            }
+
+            # Check if detector has get_state method
+            if hasattr(detector, "get_state"):
+                try:
+                    state = detector.get_state()
+                    entry["connected"] = state.connected
+                    entry["status"] = state.status.value if hasattr(state.status, "value") else str(state.status)
+                    if state.error_message:
+                        entry["error"] = state.error_message
+                    if state.last_event_time:
+                        entry["lastEvent"] = state.last_event_time
+                    if state.uptime_seconds:
+                        entry["uptime"] = state.uptime_seconds
+                    # Add detector-specific info
+                    if state.extra:
+                        if "device" in state.extra:
+                            entry["device"] = state.extra["device"]
+                        if "signal_quality" in state.extra:
+                            entry["signal"] = int(state.extra["signal_quality"] * 100)
+                except Exception:
+                    pass
+            elif hasattr(detector, "is_running"):
+                entry["connected"] = detector.is_running
+                entry["status"] = "running" if detector.is_running else "stopped"
+
+            status[name] = entry
+
+        return status
+
     async def _get_status(self) -> dict[str, Any]:
         """Get current monitoring status."""
+        # Update detector status
+        self._current_state["detector_status"] = self._get_detector_status()
+
         return {
             "status": "ok",
             "data": self._current_state,
@@ -1005,6 +1188,110 @@ class DashboardServer:
         (self._config_dir / "notifications.json").write_text(json.dumps(body))
 
         return {"success": True}
+
+    # ========================================================================
+    # Audio Settings
+    # ========================================================================
+
+    async def _get_audio_settings(self) -> dict[str, Any]:
+        """Get current audio settings from config file."""
+        import yaml
+
+        config_file = self._config_dir / "config.yaml"
+        if not config_file.exists():
+            return {
+                "gain": 1.0,
+                "breathing_threshold": 0.02,
+                "silence_threshold": 0.005,
+                "breathing_freq_min_hz": 200.0,
+                "breathing_freq_max_hz": 800.0,
+            }
+
+        config = yaml.safe_load(config_file.read_text())
+        audio = config.get("detectors", {}).get("audio", {})
+
+        return {
+            "gain": audio.get("gain", 1.0),
+            "breathing_threshold": audio.get("breathing_threshold", 0.02),
+            "silence_threshold": audio.get("silence_threshold", 0.005),
+            "breathing_freq_min_hz": audio.get("breathing_freq_min_hz", 200.0),
+            "breathing_freq_max_hz": audio.get("breathing_freq_max_hz", 800.0),
+        }
+
+    async def _apply_audio_settings(self, request: Request) -> dict[str, Any]:
+        """Apply audio settings from Convex to config file and restart detector."""
+        import yaml
+        import subprocess
+
+        # Fetch settings from Convex
+        try:
+            async with httpx.AsyncClient() as client:
+                # Query Convex for audio settings
+                resp = await client.post(
+                    f"{self._convex_url}/api/query",
+                    json={
+                        "path": "settings:getAudioSettings",
+                        "args": {},
+                        "format": "json",
+                    },
+                    timeout=10.0,
+                )
+                if resp.status_code != 200:
+                    raise HTTPException(status_code=500, detail="Failed to fetch settings from Convex")
+
+                settings = resp.json().get("value", {})
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to fetch settings: {e}")
+
+        # Read existing config
+        config_file = self._config_dir / "config.yaml"
+        if config_file.exists():
+            config = yaml.safe_load(config_file.read_text())
+        else:
+            config = {}
+
+        # Update audio settings
+        if "detectors" not in config:
+            config["detectors"] = {}
+        if "audio" not in config["detectors"]:
+            config["detectors"]["audio"] = {"enabled": True}
+
+        audio = config["detectors"]["audio"]
+        audio["gain"] = settings.get("gain", 50.0)
+        audio["breathing_threshold"] = settings.get("breathing_threshold", 0.005)
+        audio["silence_threshold"] = settings.get("silence_threshold", 0.001)
+        audio["breathing_freq_min_hz"] = settings.get("breathing_freq_min_hz", 100.0)
+        audio["breathing_freq_max_hz"] = settings.get("breathing_freq_max_hz", 1200.0)
+
+        # Write config
+        config_file.write_text(yaml.dump(config, default_flow_style=False))
+
+        # Restart the nightwatch service to apply changes
+        try:
+            subprocess.run(
+                ["sudo", "systemctl", "restart", "nightwatch"],
+                check=True,
+                timeout=30,
+            )
+        except subprocess.SubprocessError as e:
+            raise HTTPException(status_code=500, detail=f"Failed to restart service: {e}")
+
+        # Clear pending flag in Convex
+        try:
+            async with httpx.AsyncClient() as client:
+                await client.post(
+                    f"{self._convex_url}/api/mutation",
+                    json={
+                        "path": "settings:clearAudioPending",
+                        "args": {},
+                        "format": "json",
+                    },
+                    timeout=10.0,
+                )
+        except Exception:
+            pass  # Non-critical
+
+        return {"success": True, "settings": settings}
 
     # ========================================================================
     # Simulator
@@ -1683,6 +1970,9 @@ class DashboardServer:
 
     async def _broadcast_state(self) -> None:
         """Broadcast current state to all WebSocket clients."""
+        # Update detector status
+        self._current_state["detector_status"] = self._get_detector_status()
+
         # Add recent events for display
         recent = self._event_buffer.get_recent(60)  # Last minute
         recent_dicts = [

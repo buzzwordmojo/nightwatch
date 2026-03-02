@@ -21,7 +21,7 @@ from nightwatch.core.engine import AlertEngine
 from nightwatch.core.notifiers.audio import AudioNotifier
 from nightwatch.detectors.radar import RadarDetector
 from nightwatch.detectors.radar.detector import MockRadarDetector
-from nightwatch.detectors.audio.detector import MockAudioDetector
+from nightwatch.detectors.audio.detector import AudioDetector, MockAudioDetector
 from nightwatch.detectors.bcg.detector import MockBCGDetector
 from nightwatch.dashboard.server import DashboardServer
 from nightwatch.bridge.convex import ConvexBridge, ConvexEventHandler
@@ -260,11 +260,16 @@ async def run_nightwatch(
             ))
             print("  ✓ Radar detector")
 
-        # Real audio and BCG detectors would go here when hardware is connected
-        # For now, fall back to mock if enabled but no hardware
         if config.detectors.audio.enabled:
-            print("  ⚠ Audio detector (mock - no hardware)")
-            detectors.append(MockAudioDetector(publisher=publisher))
+            try:
+                detectors.append(AudioDetector(
+                    config=config.detectors.audio,
+                    publisher=publisher,
+                ))
+                print("  ✓ Audio detector")
+            except Exception as e:
+                print(f"  ⚠ Audio detector (mock - {e})")
+                detectors.append(MockAudioDetector(publisher=publisher))
 
         if config.detectors.bcg.enabled:
             print("  ⚠ BCG detector (mock - no hardware)")
@@ -334,13 +339,42 @@ async def run_nightwatch(
     for detector in detectors:
         await detector.start()
 
+    # Report system status to Convex periodically
+    async def update_system_status():
+        while not shutdown_event.is_set():
+            try:
+                await convex_bridge.update_system_status("engine", "online", "Alert engine running")
+                for detector in detectors:
+                    await convex_bridge.update_system_status(
+                        detector.name,
+                        "online" if detector.is_running else "offline",
+                        f"{detector.name.title()} detector active"
+                    )
+            except Exception as e:
+                print(f"Warning: Failed to update system status: {e}")
+            await asyncio.sleep(15)  # Update every 15 seconds
+
+    status_task = None
+    if convex_bridge:
+        status_task = asyncio.create_task(update_system_status())
+
     print("=" * 40)
     print(f"✅ Monitoring started with {len(detectors)} detector(s)")
     print("Press Ctrl+C to stop")
     print()
+    import sys
+    sys.stdout.flush()
 
     # Wait for shutdown
     await shutdown_event.wait()
+
+    # Cancel status update task
+    if status_task:
+        status_task.cancel()
+        try:
+            await status_task
+        except asyncio.CancelledError:
+            pass
 
     # Cleanup
     for detector in detectors:

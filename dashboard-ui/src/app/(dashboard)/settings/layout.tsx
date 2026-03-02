@@ -2,11 +2,13 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Moon, ArrowLeft, Bell, Users, AlertTriangle, Settings } from "lucide-react";
+import { Moon, ArrowLeft, Bell, Users, AlertTriangle, Settings, Mic, Radio } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const navItems = [
   { href: "/settings", label: "General", icon: Settings },
+  { href: "/settings/radar", label: "Radar", icon: Radio },
+  { href: "/settings/audio", label: "Audio", icon: Mic },
   { href: "/settings/notifications", label: "Notifications", icon: Bell },
   { href: "/settings/sharing", label: "Sharing", icon: Users },
   { href: "/settings/alerts", label: "Alert Rules", icon: AlertTriangle },

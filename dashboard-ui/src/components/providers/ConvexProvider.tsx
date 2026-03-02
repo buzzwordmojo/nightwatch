@@ -1,20 +1,38 @@
 "use client";
 
 import { ConvexProvider as BaseConvexProvider, ConvexReactClient } from "convex/react";
-import { ReactNode, useMemo } from "react";
+import { ReactNode, useMemo, useState, useEffect } from "react";
 
-// Only create client if URL is configured (not during static export)
-const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
+// Placeholder URL for SSR/build time - Convex client requires a valid URL format
+const PLACEHOLDER_URL = "https://placeholder.convex.cloud";
 
 export function ConvexProvider({ children }: { children: ReactNode }) {
-  const client = useMemo(() => {
-    if (!convexUrl) return null;
-    return new ConvexReactClient(convexUrl);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
   }, []);
 
-  // During static export or when Convex is not configured, render children directly
-  if (!client) {
-    return <>{children}</>;
+  const client = useMemo(() => {
+    // During SSR/build, use placeholder URL (won't actually connect)
+    if (typeof window === "undefined") {
+      return new ConvexReactClient(PLACEHOLDER_URL);
+    }
+    // In browser, use proxy through the Python server
+    const protocol = window.location.protocol;
+    const host = window.location.host;
+    return new ConvexReactClient(`${protocol}//${host}/convex`);
+  }, []);
+
+  // Show loading state until mounted in browser
+  if (!mounted) {
+    return (
+      <BaseConvexProvider client={client}>
+        <div className="min-h-screen flex items-center justify-center">
+          <div className="animate-pulse text-muted-foreground">Loading...</div>
+        </div>
+      </BaseConvexProvider>
+    );
   }
 
   return <BaseConvexProvider client={client}>{children}</BaseConvexProvider>;

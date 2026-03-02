@@ -73,4 +73,12 @@ export default defineSchema({
     message: v.string(),
     cooldownSeconds: v.number(),
   }).index("by_name", ["name"]),
+
+  // Raw radar signal data for visualization (5 minute rolling window)
+  radarSignal: defineTable({
+    timestamp: v.number(), // Unix timestamp ms
+    x: v.number(), // mm (horizontal position)
+    y: v.number(), // mm (depth/distance)
+    distance: v.number(), // meters (computed)
+  }).index("by_timestamp", ["timestamp"]),
 });

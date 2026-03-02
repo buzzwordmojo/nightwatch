@@ -80,13 +80,18 @@ Allows the radar to be wall-mounted away from the Pi with just a USB cable.
 
 **Wiring (Radar to CP2102):**
 ```
-LD2450      CP2102
-──────      ──────
-VCC   ───>  5V (or 3.3V)
-GND   ───>  GND
-TX    ───>  RX
-RX    <───  TX
+LD2450                   CP2102
+──────                   ──────
+Black (5V)   ──────────► Red    (VOUT)
+Yellow (GND) ──────────► Black  (GND)
+White (TX)   ──────────► Yellow (RXD)
+Red (RX)     ◄────────── Blue   (TXD)
 ```
+
+**CP2102 wire colors (VOUT to CTS):** Red, Black, Blue, Yellow, Orange, Green
+- Orange (DTR) and Green (CTS) are not used
+
+**Note:** LD2450 wire colors are counterintuitive (black=5V, yellow=GND) - trust the labels on the connector, not the colors.
 
 ### Short Wiring (Radar to CP2102)
 
@@ -160,6 +165,53 @@ RX    <───  TX
 | **HX711 ADC** | 24-bit load cell ADC | $5 | [Amazon 2-pack](https://www.amazon.com/dp/B07MTYT95R) |
 
 **Note:** More complex to install but very accurate.
+
+### Option C: Capacitive Sensors (Aluminum Foil)
+
+Uses aluminum foil plates as capacitive sensors to detect micro-movements from heartbeat.
+
+| Item | Spec | Price | Link | Status |
+|------|------|-------|------|--------|
+| **FDC1004 Breakout** | 4-ch capacitive-to-digital, I2C | $37.80 | [ProtoCentral](https://protocentral.com/) | ORDERED 2/26 #207521 |
+| **Aluminum Foil** | Standard kitchen foil | $3 | Cut into 4 plates (~10cm x 10cm) | |
+| **Shielded Cable** | 4-conductor, ~2m | $5 | For sensor-to-FDC1004 connection | |
+
+**Why FDC1004:**
+- 4 independent channels (position info from multiple plates)
+- ±0.5 fF resolution (sensitive enough for BCG micro-movements)
+- Simple I2C interface (4 wires to Pi)
+- 3.3V compatible
+
+**Wiring (FDC1004 to Raspberry Pi):**
+```
+FDC1004         Raspberry Pi 5
+────────        ──────────────
+VIN      ─────► 3.3V (Pin 1)
+GND      ─────► GND (Pin 6)
+SDA      ─────► GPIO 2 / SDA (Pin 3)
+SCL      ─────► GPIO 3 / SCL (Pin 5)
+```
+
+**Sensor Wiring:**
+```
+Foil Plate 1  ─────► CIN1
+Foil Plate 2  ─────► CIN2
+Foil Plate 3  ─────► CIN3
+Foil Plate 4  ─────► CIN4
+```
+
+**Placement (under mattress, chest area):**
+```
+┌─────────────────────────────────┐
+│           (head)                │
+│    ┌───┐  ┌───┐  ┌───┐  ┌───┐  │
+│    │ 1 │  │ 2 │  │ 3 │  │ 4 │  │ ◄── Foil plates under torso
+│    └───┘  └───┘  └───┘  └───┘  │
+│           (feet)                │
+└─────────────────────────────────┘
+```
+
+**Note:** Experimental - may need tuning. Foil plates should be insulated from bed frame (use plastic sheet underneath).
 
 ### Mounting Materials
 

@@ -7,7 +7,7 @@ import { PauseButton } from "@/components/dashboard/PauseButton";
 
 export default function Dashboard() {
   const vitals = useQuery(api.vitals.getCurrentVitals);
-  const readings = useQuery(api.vitals.getRecentReadings, { minutes: 480 });
+  const readings = useQuery(api.vitals.getRecentReadings, { minutes: 60 });
   const activeAlerts = useQuery(api.alerts.getActive);
   const pauseStatus = useQuery(api.system.isPaused);
   const systemHealth = useQuery(api.system.getHealth);

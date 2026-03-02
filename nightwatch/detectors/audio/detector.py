@@ -159,6 +159,10 @@ class AudioDetector(BaseDetector):
                     timeout=1.0,
                 )
 
+                # Apply software gain (amplify quiet signals)
+                if self._config.gain != 1.0:
+                    audio = np.clip(audio * self._config.gain, -1.0, 1.0)
+
                 # Process audio
                 timestamp = time.time()
                 analysis = self._processor.process(audio, timestamp)

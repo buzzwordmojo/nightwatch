@@ -63,14 +63,18 @@ export const getRecentReadings = query({
     minutes: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    const minutes = args.minutes ?? 30;
+    const minutes = Math.min(args.minutes ?? 30, 480); // Cap at 8 hours
     const cutoff = Date.now() - minutes * 60 * 1000;
+
+    // For longer ranges, use server-side downsampling to avoid timeouts
+    // By taking fewer records with larger gaps
+    const maxRecords = minutes > 60 ? 500 : 1000;
 
     return await ctx.db
       .query("readings")
       .withIndex("by_timestamp", (q) => q.gte("timestamp", cutoff))
       .order("asc")
-      .collect();
+      .take(maxRecords);
   },
 });
 
@@ -136,7 +140,7 @@ export const cleanupReadings = mutation({
     const oldReadings = await ctx.db
       .query("readings")
       .withIndex("by_timestamp", (q) => q.lt("timestamp", cutoff))
-      .collect();
+      .take(500); // Delete in batches
 
     let deleted = 0;
     for (const reading of oldReadings) {
@@ -145,5 +149,106 @@ export const cleanupReadings = mutation({
     }
 
     return { deleted };
+  },
+});
+
+// Aggressive cleanup - keep only last N minutes
+export const purgeOldReadings = mutation({
+  args: {
+    keepMinutes: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const keepMinutes = args.keepMinutes ?? 30;
+    const cutoff = Date.now() - keepMinutes * 60 * 1000;
+
+    const oldReadings = await ctx.db
+      .query("readings")
+      .withIndex("by_timestamp", (q) => q.lt("timestamp", cutoff))
+      .take(500); // Delete in batches to avoid timeout
+
+    let deleted = 0;
+    for (const reading of oldReadings) {
+      await ctx.db.delete(reading._id);
+      deleted++;
+    }
+
+    return { deleted, more: oldReadings.length === 500 };
+  },
+});
+
+// ============================================================================
+// Radar Signal Data (for visualization)
+// ============================================================================
+
+// Insert radar signal sample (called at ~11 Hz by Python backend)
+export const insertRadarSignal = mutation({
+  args: {
+    x: v.number(),
+    y: v.number(),
+    distance: v.number(),
+  },
+  handler: async (ctx, args) => {
+    return await ctx.db.insert("radarSignal", {
+      timestamp: Date.now(),
+      x: args.x,
+      y: args.y,
+      distance: args.distance,
+    });
+  },
+});
+
+// Get recent radar signal data for charts
+export const getRadarSignal = query({
+  args: {
+    seconds: v.optional(v.number()),
+    maxPoints: v.optional(v.number()), // Downsample to this many points max
+  },
+  handler: async (ctx, args) => {
+    const seconds = args.seconds ?? 30;
+    const maxPoints = args.maxPoints ?? 500; // Default to 500 points for rendering
+    const cutoff = Date.now() - seconds * 1000;
+
+    const allData = await ctx.db
+      .query("radarSignal")
+      .withIndex("by_timestamp", (q) => q.gte("timestamp", cutoff))
+      .order("asc")
+      .collect();
+
+    // If we have more points than maxPoints, downsample
+    if (allData.length <= maxPoints) {
+      return allData;
+    }
+
+    // Simple downsampling: take every Nth point
+    const step = Math.ceil(allData.length / maxPoints);
+    const downsampled = [];
+    for (let i = 0; i < allData.length; i += step) {
+      downsampled.push(allData[i]);
+    }
+    return downsampled;
+  },
+});
+
+// Cleanup old radar signal data (configurable, default 12 hours)
+export const cleanupRadarSignal = mutation({
+  args: {
+    keepHours: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const keepHours = args.keepHours ?? 12;
+    const cutoff = Date.now() - keepHours * 60 * 60 * 1000;
+
+    const oldSignals = await ctx.db
+      .query("radarSignal")
+      .withIndex("by_timestamp", (q) => q.lt("timestamp", cutoff))
+      .take(500); // Delete in batches
+
+    let deleted = 0;
+    for (const signal of oldSignals) {
+      await ctx.db.delete(signal._id);
+      deleted++;
+    }
+
+    return { deleted, more: oldSignals.length === 500 };
   },
 });
