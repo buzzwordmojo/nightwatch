@@ -27,6 +27,9 @@ fail() {
     exit 1
 }
 
+# Ensure git trusts the repo directory (we run as root, repo owned by pi)
+git config --global --add safe.directory "$REPO_DIR" 2>/dev/null
+
 # Clear previous log
 echo "" > "$LOG_FILE"
 log "UPDATE STARTED"
