@@ -93,12 +93,17 @@ if [ -f "/etc/nightwatch/convex.env" ]; then
 fi
 
 if [ -n "$ADMIN_KEY" ]; then
-    # Check if Convex is reachable
-    if curl -s --max-time 5 "$CONVEX_URL/version" > /dev/null 2>&1; then
-        npx convex deploy --url "$CONVEX_URL" --admin-key "$ADMIN_KEY" >> "$LOG_FILE" 2>&1 || log "  Warning: convex deploy failed"
-        log "STEP 6/7: DONE"
+    # Convex CLI needs Node 20+; check before attempting
+    NODE_MAJOR=$(node --version | sed 's/v//' | cut -d. -f1)
+    if [ "$NODE_MAJOR" -ge 20 ] 2>/dev/null; then
+        if curl -s --max-time 5 "$CONVEX_URL/version" > /dev/null 2>&1; then
+            npx convex deploy --url "$CONVEX_URL" --admin-key "$ADMIN_KEY" >> "$LOG_FILE" 2>&1 || log "  Warning: convex deploy failed"
+            log "STEP 6/7: DONE"
+        else
+            log "STEP 6/7: SKIPPED (Convex not reachable)"
+        fi
     else
-        log "STEP 6/7: SKIPPED (Convex not reachable)"
+        log "STEP 6/7: SKIPPED (Node $NODE_VERSION too old for Convex CLI, deploy from dev machine)"
     fi
 else
     log "STEP 6/7: SKIPPED (no admin key)"
@@ -106,9 +111,11 @@ fi
 
 # Step 7: Restart services
 log "STEP 7/7: Restarting services..."
-systemctl restart nightwatch-convex >> "$LOG_FILE" 2>&1 || log "  Warning: nightwatch-convex restart failed"
-systemctl restart nightwatch-dashboard >> "$LOG_FILE" 2>&1 || log "  Warning: nightwatch-dashboard restart failed"
-systemctl restart nightwatch >> "$LOG_FILE" 2>&1 || log "  Warning: nightwatch restart failed"
+systemctl restart convex-backend >> "$LOG_FILE" 2>&1 || true
+systemctl restart nightwatch-dashboard >> "$LOG_FILE" 2>&1 || true
 log "STEP 7/7: DONE"
 
 log "UPDATE COMPLETE (commit: $COMMIT)"
+
+# Restart the main nightwatch service last — this is the caller's parent
+systemctl restart nightwatch >> "$LOG_FILE" 2>&1 || true
