@@ -196,3 +196,81 @@ export const clearAudioPending = mutation({
     return true;
   },
 });
+
+// Update settings defaults
+const UPDATE_DEFAULTS = {
+  auto_update: true,
+  status: "idle" as string,
+  message: "" as string,
+  last_check: 0,
+  available: false,
+  current_commit: "" as string,
+  latest_commit: "" as string,
+};
+
+// Get update settings with defaults
+export const getUpdateSettings = query({
+  args: {},
+  handler: async (ctx) => {
+    const settings = await ctx.db.query("settings").collect();
+    const result: Record<string, unknown> = { ...UPDATE_DEFAULTS };
+
+    for (const s of settings) {
+      if (s.key.startsWith("update.")) {
+        const key = s.key.replace("update.", "");
+        if (key in UPDATE_DEFAULTS) {
+          result[key] = s.value;
+        }
+      }
+    }
+
+    return result as typeof UPDATE_DEFAULTS;
+  },
+});
+
+// Update status fields
+export const setUpdateStatus = mutation({
+  args: {
+    status: v.string(),
+    message: v.optional(v.string()),
+    available: v.optional(v.boolean()),
+    current_commit: v.optional(v.string()),
+    latest_commit: v.optional(v.string()),
+    last_check: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const updates: { key: string; value: unknown }[] = [
+      { key: "update.status", value: args.status },
+    ];
+    if (args.message !== undefined) {
+      updates.push({ key: "update.message", value: args.message });
+    }
+    if (args.available !== undefined) {
+      updates.push({ key: "update.available", value: args.available });
+    }
+    if (args.current_commit !== undefined) {
+      updates.push({ key: "update.current_commit", value: args.current_commit });
+    }
+    if (args.latest_commit !== undefined) {
+      updates.push({ key: "update.latest_commit", value: args.latest_commit });
+    }
+    if (args.last_check !== undefined) {
+      updates.push({ key: "update.last_check", value: args.last_check });
+    }
+
+    for (const { key, value } of updates) {
+      const existing = await ctx.db
+        .query("settings")
+        .withIndex("by_key", (q) => q.eq("key", key))
+        .first();
+
+      if (existing) {
+        await ctx.db.patch(existing._id, { value });
+      } else {
+        await ctx.db.insert("settings", { key, value });
+      }
+    }
+
+    return true;
+  },
+});

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Moon, ArrowLeft, Bell, Users, AlertTriangle, Settings, Mic, Radio } from "lucide-react";
+import { Moon, ArrowLeft, Bell, Users, AlertTriangle, Settings, Mic, Radio, Download } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const navItems = [
@@ -12,6 +12,7 @@ const navItems = [
   { href: "/settings/notifications", label: "Notifications", icon: Bell },
   { href: "/settings/sharing", label: "Sharing", icon: Users },
   { href: "/settings/alerts", label: "Alert Rules", icon: AlertTriangle },
+  { href: "/settings/updates", label: "Updates", icon: Download },
 ];
 
 export default function SettingsLayout({

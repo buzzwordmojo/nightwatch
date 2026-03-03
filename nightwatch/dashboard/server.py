@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import subprocess
 import tempfile
 import time
 from pathlib import Path
@@ -193,6 +195,11 @@ class DashboardServer:
         # Audio settings
         self._app.post("/api/audio/apply-settings")(self._apply_audio_settings)
         self._app.get("/api/audio/settings")(self._get_audio_settings)
+
+        # OTA update routes
+        self._app.post("/api/update/check")(self._update_check)
+        self._app.post("/api/update/apply")(self._update_apply)
+        self._app.get("/api/update/status")(self._update_status)
 
         # Live audio streaming
         self._app.websocket("/ws/audio")(self._audio_stream_endpoint)
@@ -1297,6 +1304,180 @@ class DashboardServer:
         return {"success": True, "settings": settings}
 
     # ========================================================================
+    # OTA Updates
+    # ========================================================================
+
+    _REPO_DIR = Path("/home/pi/nightwatch")
+    _UPDATE_LOG = Path("/var/log/nightwatch/update.log")
+    _UPDATE_SCRIPT = Path("/home/pi/nightwatch/scripts/self-update.sh")
+
+    async def _update_check(self) -> dict[str, Any]:
+        """Check if an update is available by comparing local vs remote HEAD."""
+        repo_dir = self._REPO_DIR
+        if not (repo_dir / ".git").exists():
+            return {
+                "available": False,
+                "error": "No git repo found",
+                "currentCommit": None,
+                "latestCommit": None,
+                "commitsBehind": 0,
+            }
+
+        try:
+            # Fetch latest from remote
+            await asyncio.to_thread(
+                subprocess.run,
+                ["git", "fetch", "origin", "main"],
+                cwd=repo_dir,
+                capture_output=True,
+                timeout=30,
+            )
+
+            # Get current HEAD
+            current = await asyncio.to_thread(
+                subprocess.run,
+                ["git", "rev-parse", "--short", "HEAD"],
+                cwd=repo_dir,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            current_commit = current.stdout.strip()
+
+            # Get remote HEAD
+            latest = await asyncio.to_thread(
+                subprocess.run,
+                ["git", "rev-parse", "--short", "origin/main"],
+                cwd=repo_dir,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            latest_commit = latest.stdout.strip()
+
+            # Count commits behind
+            behind = await asyncio.to_thread(
+                subprocess.run,
+                ["git", "rev-list", "--count", "HEAD..origin/main"],
+                cwd=repo_dir,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            commits_behind = int(behind.stdout.strip()) if behind.stdout.strip() else 0
+
+            return {
+                "available": commits_behind > 0,
+                "currentCommit": current_commit,
+                "latestCommit": latest_commit,
+                "commitsBehind": commits_behind,
+            }
+        except Exception as e:
+            return {
+                "available": False,
+                "error": str(e),
+                "currentCommit": None,
+                "latestCommit": None,
+                "commitsBehind": 0,
+            }
+
+    async def _update_apply(self) -> dict[str, Any]:
+        """Launch the self-update script as a detached process."""
+        script = self._UPDATE_SCRIPT
+        if not script.exists():
+            raise HTTPException(status_code=404, detail="Update script not found")
+
+        try:
+            # Launch detached — the script will restart our process
+            subprocess.Popen(
+                ["sudo", str(script)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            return {"started": True}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    async def _update_status(self) -> dict[str, Any]:
+        """Read the update log and return current progress."""
+        log_file = self._UPDATE_LOG
+        if not log_file.exists():
+            return {"status": "idle", "lines": [], "complete": False}
+
+        try:
+            text = log_file.read_text().strip()
+            lines = text.split("\n") if text else []
+
+            # Determine status from log content
+            complete = any("UPDATE COMPLETE" in l for l in lines)
+            error = any("ERROR" in l for l in lines)
+
+            if complete:
+                status = "complete"
+            elif error:
+                status = "error"
+            elif lines:
+                status = "updating"
+            else:
+                status = "idle"
+
+            return {
+                "status": status,
+                "lines": lines[-50:],  # Last 50 lines
+                "complete": complete,
+            }
+        except Exception as e:
+            return {"status": "error", "lines": [str(e)], "complete": False}
+
+    async def _auto_update_loop(self) -> None:
+        """Background task: periodically check for updates and auto-apply."""
+        logger = logging.getLogger(__name__)
+        while self._running:
+            try:
+                await asyncio.sleep(300)  # 5 minutes
+
+                # Check if auto-update is enabled via Convex
+                if self._convex_client is None:
+                    self._convex_client = httpx.AsyncClient(timeout=30.0)
+                try:
+                    resp = await self._convex_client.post(
+                        f"{self._convex_url}/api/query",
+                        json={
+                            "path": "settings:get",
+                            "args": {"key": "update.auto_update"},
+                            "format": "json",
+                        },
+                        timeout=10.0,
+                    )
+                    result = resp.json()
+                    auto_enabled = result.get("value")
+                    # Default to True if not set
+                    if auto_enabled is None:
+                        auto_enabled = True
+                    if not auto_enabled:
+                        continue
+                except Exception:
+                    # If we can't reach Convex, default to enabled
+                    pass
+
+                # Check for updates
+                check = await self._update_check()
+                if check.get("available"):
+                    logger.info(
+                        "Auto-update: %d commits behind, applying...",
+                        check.get("commitsBehind", 0),
+                    )
+                    await self._update_apply()
+                    # Script will restart us, so break out
+                    break
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error("Auto-update check failed: %s", e)
+                await asyncio.sleep(60)
+
+    # ========================================================================
     # Live Audio Streaming
     # ========================================================================
 
@@ -2040,6 +2221,9 @@ class DashboardServer:
         # Start update broadcast task
         self._update_task = asyncio.create_task(self._update_loop())
 
+        # Start auto-update background task
+        self._auto_update_task = asyncio.create_task(self._auto_update_loop())
+
         # Configure SSL if enabled and certs exist
         ssl_keyfile = None
         ssl_certfile = None
@@ -2070,6 +2254,13 @@ class DashboardServer:
             self._update_task.cancel()
             try:
                 await self._update_task
+            except asyncio.CancelledError:
+                pass
+
+        if hasattr(self, "_auto_update_task") and self._auto_update_task:
+            self._auto_update_task.cancel()
+            try:
+                await self._auto_update_task
             except asyncio.CancelledError:
                 pass
 
