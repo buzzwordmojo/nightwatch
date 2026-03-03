@@ -75,6 +75,9 @@ class AudioDetector(BaseDetector):
         self._stream = None
         self._audio_buffer: asyncio.Queue[np.ndarray] = asyncio.Queue()
 
+        # Live audio listeners (for dashboard streaming)
+        self._audio_listeners: set[asyncio.Queue] = set()
+
         # State
         self._device_name: str | None = None
         self._last_analysis: BreathingAnalysis | None = None
@@ -146,6 +149,16 @@ class AudioDetector(BaseDetector):
                 pass
             self._stream = None
 
+    def subscribe_audio(self) -> asyncio.Queue:
+        """Subscribe to raw audio chunks for live streaming."""
+        queue: asyncio.Queue = asyncio.Queue(maxsize=50)
+        self._audio_listeners.add(queue)
+        return queue
+
+    def unsubscribe_audio(self, queue: asyncio.Queue) -> None:
+        """Unsubscribe from raw audio chunks."""
+        self._audio_listeners.discard(queue)
+
     async def _read_loop(self) -> None:
         """Process audio stream and emit events."""
         emit_interval = 1.0 / self._config.update_rate_hz
@@ -162,6 +175,13 @@ class AudioDetector(BaseDetector):
                 # Apply software gain (amplify quiet signals)
                 if self._config.gain != 1.0:
                     audio = np.clip(audio * self._config.gain, -1.0, 1.0)
+
+                # Fan out to live audio listeners
+                for listener in list(self._audio_listeners):
+                    try:
+                        listener.put_nowait(audio)
+                    except asyncio.QueueFull:
+                        pass  # Drop frames for slow consumers
 
                 # Process audio
                 timestamp = time.time()
@@ -347,6 +367,22 @@ class MockAudioDetector(BaseDetector):
         # Simulated state
         self._breathing_phase = 0.0
 
+        # Live audio listeners (for dashboard streaming)
+        self._audio_listeners: set[asyncio.Queue] = set()
+
+        # Synthetic audio params
+        self._sample_rate = 16000
+
+    def subscribe_audio(self) -> asyncio.Queue:
+        """Subscribe to raw audio chunks for live streaming."""
+        queue: asyncio.Queue = asyncio.Queue(maxsize=50)
+        self._audio_listeners.add(queue)
+        return queue
+
+    def unsubscribe_audio(self, queue: asyncio.Queue) -> None:
+        """Unsubscribe from raw audio chunks."""
+        self._audio_listeners.discard(queue)
+
     async def _connect(self) -> None:
         """Mock connection."""
         await asyncio.sleep(0.05)
@@ -360,6 +396,7 @@ class MockAudioDetector(BaseDetector):
         import random
 
         interval = 1.0 / self._update_rate_hz
+        chunk_samples = int(self._sample_rate * interval)
 
         while self._running:
             timestamp = time.time()
@@ -418,6 +455,20 @@ class MockAudioDetector(BaseDetector):
                 state = EventState.WARNING
             if seizure_detected:
                 state = EventState.ALERT
+
+            # Generate synthetic audio for listeners
+            if self._audio_listeners:
+                t = np.arange(chunk_samples) / self._sample_rate
+                # Breathing-like tone modulated by breathing phase
+                freq = 400.0  # Hz
+                envelope = 0.3 * (0.5 + 0.5 * np.sin(2 * np.pi * self._breathing_phase))
+                audio_chunk = (envelope * np.sin(2 * np.pi * freq * t + timestamp)).astype(np.float32)
+                audio_chunk += (np.random.randn(chunk_samples) * 0.02).astype(np.float32)
+                for listener in list(self._audio_listeners):
+                    try:
+                        listener.put_nowait(audio_chunk)
+                    except asyncio.QueueFull:
+                        pass
 
             await self._emit_event(
                 state=state,

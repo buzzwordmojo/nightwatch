@@ -194,6 +194,9 @@ class DashboardServer:
         self._app.post("/api/audio/apply-settings")(self._apply_audio_settings)
         self._app.get("/api/audio/settings")(self._get_audio_settings)
 
+        # Live audio streaming
+        self._app.websocket("/ws/audio")(self._audio_stream_endpoint)
+
         # Serve Next.js static export pages
         self._app.get("/settings")(self._serve_nextjs_page)
         self._app.get("/settings/{path:path}")(self._serve_nextjs_page)
@@ -1292,6 +1295,32 @@ class DashboardServer:
             pass  # Non-critical
 
         return {"success": True, "settings": settings}
+
+    # ========================================================================
+    # Live Audio Streaming
+    # ========================================================================
+
+    async def _audio_stream_endpoint(self, websocket: WebSocket) -> None:
+        """Stream raw PCM audio from the audio detector over WebSocket."""
+        audio_detector = self._detectors.get("audio")
+
+        if audio_detector is None or not hasattr(audio_detector, "subscribe_audio"):
+            await websocket.close(code=1008, reason="No audio detector available")
+            return
+
+        await websocket.accept()
+        queue = audio_detector.subscribe_audio()
+
+        try:
+            while True:
+                audio_chunk = await queue.get()
+                await websocket.send_bytes(audio_chunk.tobytes())
+        except WebSocketDisconnect:
+            pass
+        except Exception:
+            pass
+        finally:
+            audio_detector.unsubscribe_audio(queue)
 
     # ========================================================================
     # Simulator

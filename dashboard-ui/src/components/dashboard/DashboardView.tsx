@@ -7,9 +7,10 @@ import { AlertBanner } from "@/components/dashboard/AlertBanner";
 import { VitalsChart } from "@/components/dashboard/VitalsChart";
 import { AudioLevelMeter } from "@/components/dashboard/AudioLevelMeter";
 import { SensorStatusBar } from "@/components/dashboard/SensorStatusBar";
-import { Heart, Wind, Activity, Moon, Settings } from "lucide-react";
+import { Heart, Wind, Activity, Moon, Settings, Volume2, VolumeX } from "lucide-react";
 import Link from "next/link";
 import { cn, formatTime } from "@/lib/utils";
+import { useAudioMonitor } from "@/hooks/useAudioMonitor";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -45,6 +46,7 @@ export function DashboardView({
   showDetectorStatus = true,
 }: DashboardViewProps) {
   const isLoading = vitals === undefined;
+  const { isListening, toggle: toggleAudio } = useAudioMonitor();
 
   const isMockSensor = (name: string) =>
     systemHealth?.components?.[name]?.mock ?? false;
@@ -165,9 +167,35 @@ export function DashboardView({
 
       {/* Audio Level Meter */}
       <div className="mt-4 rounded-lg border bg-card p-4">
-        <AudioLevelMeter
-          level={vitals?.detectors?.audio?.value?.breathing_amplitude ?? 0}
-        />
+        <div className="flex items-center gap-3">
+          <div className="flex-1">
+            <AudioLevelMeter
+              level={vitals?.detectors?.audio?.value?.breathing_amplitude ?? 0}
+            />
+          </div>
+          <button
+            onClick={toggleAudio}
+            className={cn(
+              "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors",
+              isListening
+                ? "bg-primary text-primary-foreground"
+                : "bg-muted text-muted-foreground hover:text-foreground"
+            )}
+            title={isListening ? "Stop listening" : "Listen to live audio"}
+          >
+            {isListening ? (
+              <>
+                <Volume2 className="h-3.5 w-3.5 animate-pulse" />
+                <span>Live</span>
+              </>
+            ) : (
+              <>
+                <VolumeX className="h-3.5 w-3.5" />
+                <span>Listen</span>
+              </>
+            )}
+          </button>
+        </div>
       </div>
 
       {/* Detector Status */}
