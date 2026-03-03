@@ -1,7 +1,7 @@
 [Unit]
 Description=Nightwatch Epilepsy Monitor
-Documentation=https://github.com/YOUR_USERNAME/nightwatch
-After=network.target
+After=network.target convex-backend.service
+Wants=convex-backend.service
 
 [Service]
 Type=simple
@@ -9,7 +9,8 @@ User=nightwatch
 Group=nightwatch
 WorkingDirectory=/opt/nightwatch
 Environment="PATH=/opt/nightwatch/venv/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-ExecStart=/opt/nightwatch/venv/bin/python -m nightwatch
+Environment="CONVEX_URL=http://localhost:3210"
+ExecStart=/opt/nightwatch/venv/bin/python -m nightwatch --convex
 Restart=always
 RestartSec=5
 StandardOutput=journal

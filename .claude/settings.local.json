@@ -16,7 +16,18 @@
       "Bash(curl:*)",
       "Bash(docker exec:*)",
       "Bash(git add:*)",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(ping:*)",
+      "Bash(base64:*)",
+      "Bash(scp:*)",
+      "Bash(ssh:*)",
+      "Bash(npm run build:static:*)",
+      "Bash(gh repo view:*)",
+      "Bash(npm run build:proctor:*)",
+      "Bash(npm run build:*)",
+      "Bash(for f in .next/server/app/index.html .next/server/app/index.rsc .next/server/app/settings/audio.html .next/server/app/settings/audio.rsc)",
+      "Bash(do cat \"$f\")",
+      "Bash(done)"
     ]
   }
 }

@@ -7,7 +7,7 @@ import { AlertBanner } from "@/components/dashboard/AlertBanner";
 import { VitalsChart } from "@/components/dashboard/VitalsChart";
 import { AudioLevelMeter } from "@/components/dashboard/AudioLevelMeter";
 import { SensorStatusBar } from "@/components/dashboard/SensorStatusBar";
-import { Heart, Wind, Activity, Moon, Settings, TriangleAlert } from "lucide-react";
+import { Heart, Wind, Activity, Moon, Settings } from "lucide-react";
 import Link from "next/link";
 import { cn, formatTime } from "@/lib/utils";
 
@@ -23,6 +23,18 @@ interface DashboardViewProps {
   showDetectorStatus?: boolean;
 }
 
+function MockBadgeWrapper({ mock, children }: { mock: boolean; children: ReactNode }) {
+  if (!mock) return children;
+  return (
+    <div className="relative">
+      {children}
+      <div className="absolute top-1.5 right-10 px-1.5 py-0.5 rounded bg-amber-500 text-white text-[10px] font-bold uppercase tracking-wide">
+        Simulated
+      </div>
+    </div>
+  );
+}
+
 export function DashboardView({
   vitals,
   readings,
@@ -34,12 +46,8 @@ export function DashboardView({
 }: DashboardViewProps) {
   const isLoading = vitals === undefined;
 
-  // Compute which sensors are using mock data
-  const mockSensors = systemHealth?.components
-    ? Object.entries(systemHealth.components as Record<string, { mock?: boolean }>)
-        .filter(([, v]) => v.mock)
-        .map(([k]) => k.charAt(0).toUpperCase() + k.slice(1))
-    : [];
+  const isMockSensor = (name: string) =>
+    systemHealth?.components?.[name]?.mock ?? false;
 
   return (
     <main className="min-h-screen p-4 md:p-8">
@@ -79,17 +87,6 @@ export function DashboardView({
         </div>
       </header>
 
-      {/* Mock Sensor Banner */}
-      {systemHealth?.mockMode && mockSensors.length > 0 && (
-        <div className="mb-6 p-3 rounded-lg bg-amber-500 text-white font-bold text-center animate-pulse">
-          <div className="flex items-center justify-center gap-2">
-            <TriangleAlert className="h-5 w-5 shrink-0" />
-            <span>SIMULATED DATA — {mockSensors.join(", ")} using mock sensors</span>
-            <TriangleAlert className="h-5 w-5 shrink-0" />
-          </div>
-        </div>
-      )}
-
       {/* Active Alerts */}
       {activeAlerts && activeAlerts.length > 0 && (
         <div className="mb-6 space-y-2">
@@ -110,47 +107,55 @@ export function DashboardView({
 
       {/* Vitals Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        <VitalCard
-          title="Heart Rate"
-          value={vitals?.heartRate}
-          unit="BPM"
-          icon={<Heart className="h-5 w-5" />}
-          status={vitals?.detectors?.bcg?.state ?? "uncertain"}
-          isLoading={isLoading}
-          normalRange={{ min: 50, max: 100 }}
-          warningRange={{ low: 40, high: 120 }}
-          criticalRange={{ low: 35, high: 150 }}
-        />
+        <MockBadgeWrapper mock={isMockSensor("bcg")}>
+          <VitalCard
+            title="Heart Rate"
+            value={vitals?.heartRate}
+            unit="BPM"
+            icon={<Heart className="h-5 w-5" />}
+            status={vitals?.detectors?.bcg?.state ?? "uncertain"}
+            isLoading={isLoading}
+            normalRange={{ min: 50, max: 100 }}
+            warningRange={{ low: 40, high: 120 }}
+            criticalRange={{ low: 35, high: 150 }}
+          />
+        </MockBadgeWrapper>
 
-        <VitalCard
-          title="Respiration"
-          value={vitals?.respirationRate}
-          unit="BPM"
-          icon={<Wind className="h-5 w-5" />}
-          status={vitals?.detectors?.radar?.state ?? "uncertain"}
-          isLoading={isLoading}
-          normalRange={{ min: 10, max: 25 }}
-          warningRange={{ low: 6, high: 30 }}
-          criticalRange={{ low: 4, high: 35 }}
-        />
+        <MockBadgeWrapper mock={isMockSensor("radar")}>
+          <VitalCard
+            title="Respiration"
+            value={vitals?.respirationRate}
+            unit="BPM"
+            icon={<Wind className="h-5 w-5" />}
+            status={vitals?.detectors?.radar?.state ?? "uncertain"}
+            isLoading={isLoading}
+            normalRange={{ min: 10, max: 25 }}
+            warningRange={{ low: 6, high: 30 }}
+            criticalRange={{ low: 4, high: 35 }}
+          />
+        </MockBadgeWrapper>
 
-        <VitalCard
-          title="Breathing"
-          value={vitals?.breathingDetected ? "Detected" : "—"}
-          icon={<Activity className="h-5 w-5" />}
-          status={vitals?.detectors?.audio?.state ?? "uncertain"}
-          isLoading={isLoading}
-          showAsText
-        />
+        <MockBadgeWrapper mock={isMockSensor("audio")}>
+          <VitalCard
+            title="Breathing"
+            value={vitals?.breathingDetected ? "Detected" : "—"}
+            icon={<Activity className="h-5 w-5" />}
+            status={vitals?.detectors?.audio?.state ?? "uncertain"}
+            isLoading={isLoading}
+            showAsText
+          />
+        </MockBadgeWrapper>
 
-        <VitalCard
-          title="Bed Status"
-          value={vitals?.bedOccupied ? "Occupied" : "Empty"}
-          icon={<Moon className="h-5 w-5" />}
-          status={vitals?.bedOccupied ? "normal" : "uncertain"}
-          isLoading={isLoading}
-          showAsText
-        />
+        <MockBadgeWrapper mock={isMockSensor("bcg")}>
+          <VitalCard
+            title="Bed Status"
+            value={vitals?.bedOccupied ? "Occupied" : "Empty"}
+            icon={<Moon className="h-5 w-5" />}
+            status={vitals?.bedOccupied ? "normal" : "uncertain"}
+            isLoading={isLoading}
+            showAsText
+          />
+        </MockBadgeWrapper>
       </div>
 
       {/* Chart */}

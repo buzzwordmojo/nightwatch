@@ -1,0 +1,31 @@
+[Unit]
+Description=Convex Local Backend
+After=network.target
+Before=nightwatch.service nightwatch-dashboard.service
+
+[Service]
+Type=simple
+User=nightwatch
+Group=nightwatch
+WorkingDirectory=/opt/nightwatch/convex
+ExecStart=/opt/nightwatch/convex/convex-local-backend \
+    --instance-name convex-self-hosted \
+    --instance-secret ${CONVEX_INSTANCE_SECRET} \
+    --local-storage /opt/nightwatch/convex/data \
+    --port 3210 \
+    /opt/nightwatch/convex/data/convex.sqlite3
+EnvironmentFile=/etc/nightwatch/convex.env
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/nightwatch/convex/data
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

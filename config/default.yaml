@@ -14,7 +14,7 @@ event_system:
 detectors:
   radar:
     enabled: true
-    device: "/dev/ttyAMA0"
+    device: "/dev/ttyUSB0"
     baud_rate: 256000
     model: "ld2450"
     sensitivity: 0.8
@@ -131,7 +131,13 @@ notifiers:
 
 dashboard:
   host: "0.0.0.0"
-  port: 5000
+  port: 443
+  ssl_enabled: true
+  ssl_cert_file: "/etc/nightwatch/certs/nightwatch.crt"
+  ssl_key_file: "/etc/nightwatch/certs/nightwatch.key"
   debug: false
   websocket_update_interval_ms: 1000
   history_retention_days: 30
+
+convex:
+  url: "http://localhost:3210"
