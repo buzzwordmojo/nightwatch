@@ -2,6 +2,7 @@
 Convex bridge for pushing detector events to the dashboard.
 
 Uses HTTP mutations to send data to Convex local backend.
+Includes exponential backoff to avoid overwhelming the Pi when Convex is down.
 """
 
 from __future__ import annotations
@@ -36,15 +37,12 @@ class ConvexBridge:
 
     Pushes detector state updates and readings to Convex
     for real-time display in the dashboard.
+
+    Uses exponential backoff when Convex is unreachable to prevent
+    CPU overload from tight retry loops.
     """
 
     def __init__(self, config: ConvexConfig | None = None):
-        """
-        Initialize Convex bridge.
-
-        Args:
-            config: Convex connection configuration
-        """
         self._config = config or ConvexConfig()
         self._client: httpx.AsyncClient | None = None
         self._running = False
@@ -55,6 +53,42 @@ class ConvexBridge:
 
         # Last known state per detector
         self._detector_states: dict[str, dict[str, Any]] = {}
+
+        # Backoff state
+        self._consecutive_failures = 0
+        self._backoff_until = 0.0
+        self._base_backoff = 2.0
+        self._max_backoff = 60.0
+
+    def _is_backed_off(self) -> bool:
+        """Check if we're in a backoff period. Silently drop requests."""
+        if self._consecutive_failures == 0:
+            return False
+        return time.time() < self._backoff_until
+
+    def _record_failure(self) -> None:
+        """Record a failure and set next backoff window."""
+        self._consecutive_failures += 1
+        delay = min(
+            self._base_backoff * (2 ** (self._consecutive_failures - 1)),
+            self._max_backoff,
+        )
+        self._backoff_until = time.time() + delay
+        # Only log on first failure and then at decreasing frequency
+        if self._consecutive_failures in (1, 5, 25, 100) or self._consecutive_failures % 100 == 0:
+            logger.warning(
+                f"Convex unreachable ({self._consecutive_failures} failures), "
+                f"backing off {delay:.0f}s"
+            )
+
+    def _record_success(self) -> None:
+        """Reset backoff on success."""
+        if self._consecutive_failures > 0:
+            logger.info(
+                f"Convex connection restored after {self._consecutive_failures} failures"
+            )
+            self._consecutive_failures = 0
+            self._backoff_until = 0.0
 
     async def start(self) -> None:
         """Start the bridge."""
@@ -80,16 +114,11 @@ class ConvexBridge:
         logger.info("Convex bridge stopped")
 
     async def push_event(self, event: Event) -> bool:
-        """
-        Push a detector event to Convex.
-
-        Args:
-            event: Event from a detector
-
-        Returns:
-            True if successful
-        """
+        """Push a detector event to Convex."""
         if not self._client or not self._running:
+            return False
+
+        if self._is_backed_off():
             return False
 
         try:
@@ -116,19 +145,11 @@ class ConvexBridge:
         source: str,
         message: str,
     ) -> bool:
-        """
-        Push an alert to Convex.
-
-        Args:
-            alert_id: Unique alert identifier
-            level: "warning" or "critical"
-            source: Detector or component name
-            message: Alert message
-
-        Returns:
-            True if successful
-        """
+        """Push an alert to Convex."""
         if not self._client or not self._running:
+            return False
+
+        if self._is_backed_off():
             return False
 
         try:
@@ -149,19 +170,13 @@ class ConvexBridge:
         component: str,
         status: str,
         message: str | None = None,
+        mock: bool = False,
     ) -> bool:
-        """
-        Update system component status.
-
-        Args:
-            component: Component name (radar, audio, bcg, engine)
-            status: "online", "offline", or "error"
-            message: Optional status message
-
-        Returns:
-            True if successful
-        """
+        """Update system component status."""
         if not self._client or not self._running:
+            return False
+
+        if self._is_backed_off():
             return False
 
         try:
@@ -169,6 +184,7 @@ class ConvexBridge:
                 "component": component,
                 "status": status,
                 "message": message,
+                "mock": mock,
             })
             return True
 
@@ -182,20 +198,11 @@ class ConvexBridge:
         y: int,
         distance: float,
     ) -> bool:
-        """
-        Push raw radar signal data for visualization.
-
-        Called at ~11 Hz for real-time signal charts.
-
-        Args:
-            x: X position in mm (horizontal)
-            y: Y position in mm (depth/distance)
-            distance: Computed distance in meters
-
-        Returns:
-            True if successful
-        """
+        """Push raw radar signal data for visualization (~11 Hz)."""
         if not self._client or not self._running:
+            return False
+
+        if self._is_backed_off():
             return False
 
         try:
@@ -284,32 +291,39 @@ class ConvexBridge:
 
     async def _mutation(self, path: str, args: dict[str, Any]) -> Any:
         """
-        Call a Convex mutation.
+        Call a Convex mutation with backoff on failure.
 
-        Args:
-            path: Mutation path (e.g., "vitals:updateDetector")
-            args: Mutation arguments
-
-        Returns:
-            Mutation result
+        On connection failure, records the failure for exponential backoff
+        so subsequent calls are silently dropped until the backoff expires.
         """
         if not self._client:
             raise RuntimeError("Client not initialized")
 
-        # Convex local uses a simple HTTP API
-        # Format: POST /api/mutation/{path}
-        response = await self._client.post(
-            f"/api/mutation",
-            json={
-                "path": path,
-                "args": args,
-            },
-        )
+        try:
+            response = await self._client.post(
+                "/api/mutation",
+                json={
+                    "path": path,
+                    "args": args,
+                },
+            )
 
-        if response.status_code != 200:
-            raise RuntimeError(f"Convex mutation failed: {response.text}")
+            if response.status_code != 200:
+                self._record_failure()
+                raise RuntimeError(f"Convex mutation failed: {response.text}")
 
-        return response.json()
+            self._record_success()
+            return response.json()
+
+        except httpx.ConnectError:
+            self._record_failure()
+            raise
+        except httpx.TimeoutException:
+            self._record_failure()
+            raise
+        except httpx.HTTPError:
+            self._record_failure()
+            raise
 
     @staticmethod
     def _event_state_to_string(state: EventState) -> str:
@@ -330,12 +344,6 @@ class ConvexEventHandler:
     """
 
     def __init__(self, bridge: ConvexBridge):
-        """
-        Initialize handler.
-
-        Args:
-            bridge: Convex bridge instance
-        """
         self._bridge = bridge
 
     async def __call__(self, event: Event) -> None:

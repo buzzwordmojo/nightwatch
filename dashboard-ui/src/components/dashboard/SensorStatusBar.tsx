@@ -25,6 +25,7 @@ interface SensorStatusBarProps {
     audio?: SensorStatus;
     bcg?: SensorStatus;
   };
+  mockComponents?: Record<string, { mock?: boolean }>;
 }
 
 const sensorConfig = [
@@ -69,13 +70,14 @@ function formatLastEvent(timestamp?: number): string {
   return `${Math.round(seconds / 3600)}h ago`;
 }
 
-export function SensorStatusBar({ detectors }: SensorStatusBarProps) {
+export function SensorStatusBar({ detectors, mockComponents }: SensorStatusBarProps) {
   return (
     <TooltipProvider delayDuration={200}>
       <div className="flex items-center gap-1.5">
         {sensorConfig.map(({ key, label, icon: Icon }) => {
           const sensor = detectors?.[key as keyof typeof detectors];
-          const statusColor = getStatusColor(sensor);
+          const isMock = mockComponents?.[key]?.mock ?? false;
+          const statusColor = isMock ? "bg-amber-500" : getStatusColor(sensor);
           const isConnected = sensor?.connected ?? false;
 
           return (
@@ -92,11 +94,16 @@ export function SensorStatusBar({ detectors }: SensorStatusBarProps) {
                     className={cn(
                       "w-1.5 h-1.5 rounded-full shrink-0",
                       statusColor,
-                      isConnected && sensor?.status === "running" && "animate-pulse"
+                      isConnected && sensor?.status === "running" && !isMock && "animate-pulse"
                     )}
                   />
                   <Icon className="w-3 h-3 hidden sm:block" />
                   <span className="hidden md:inline">{label}</span>
+                  {isMock && (
+                    <span className="px-1 py-px text-[9px] font-bold leading-none rounded bg-amber-500 text-white">
+                      SIM
+                    </span>
+                  )}
                 </button>
               </TooltipTrigger>
               <TooltipContent side="bottom" className="max-w-[200px]">
@@ -110,9 +117,9 @@ export function SensorStatusBar({ detectors }: SensorStatusBarProps) {
                       <span>Status:</span>
                       <span className={cn(
                         "capitalize",
-                        isConnected ? "text-green-500" : "text-red-500"
+                        isMock ? "text-amber-500" : isConnected ? "text-green-500" : "text-red-500"
                       )}>
-                        {isConnected ? (sensor?.status ?? "connected") : "offline"}
+                        {isMock ? "simulated" : isConnected ? (sensor?.status ?? "connected") : "offline"}
                       </span>
                     </div>
                     {sensor?.signal !== undefined && (

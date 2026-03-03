@@ -7,9 +7,9 @@ import { AlertBanner } from "@/components/dashboard/AlertBanner";
 import { VitalsChart } from "@/components/dashboard/VitalsChart";
 import { AudioLevelMeter } from "@/components/dashboard/AudioLevelMeter";
 import { SensorStatusBar } from "@/components/dashboard/SensorStatusBar";
-import { Heart, Wind, Activity, Moon, Settings } from "lucide-react";
+import { Heart, Wind, Activity, Moon, Settings, TriangleAlert } from "lucide-react";
 import Link from "next/link";
-import { formatTime } from "@/lib/utils";
+import { cn, formatTime } from "@/lib/utils";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -34,6 +34,13 @@ export function DashboardView({
 }: DashboardViewProps) {
   const isLoading = vitals === undefined;
 
+  // Compute which sensors are using mock data
+  const mockSensors = systemHealth?.components
+    ? Object.entries(systemHealth.components as Record<string, { mock?: boolean }>)
+        .filter(([, v]) => v.mock)
+        .map(([k]) => k.charAt(0).toUpperCase() + k.slice(1))
+    : [];
+
   return (
     <main className="min-h-screen p-4 md:p-8">
       {/* Header */}
@@ -49,13 +56,13 @@ export function DashboardView({
             </p>
           </div>
           <div className="hidden sm:block border-l pl-3 ml-1">
-            <SensorStatusBar detectors={vitals?.detectorStatus} />
+            <SensorStatusBar detectors={vitals?.detectorStatus} mockComponents={systemHealth?.components} />
           </div>
         </div>
 
         <div className="flex items-center gap-4">
           <div className="sm:hidden">
-            <SensorStatusBar detectors={vitals?.detectorStatus} />
+            <SensorStatusBar detectors={vitals?.detectorStatus} mockComponents={systemHealth?.components} />
           </div>
           <StatusIndicator
             status={systemHealth?.overall ?? "offline"}
@@ -71,6 +78,17 @@ export function DashboardView({
           </Link>
         </div>
       </header>
+
+      {/* Mock Sensor Banner */}
+      {systemHealth?.mockMode && mockSensors.length > 0 && (
+        <div className="mb-6 p-3 rounded-lg bg-amber-500 text-white font-bold text-center animate-pulse">
+          <div className="flex items-center justify-center gap-2">
+            <TriangleAlert className="h-5 w-5 shrink-0" />
+            <span>SIMULATED DATA — {mockSensors.join(", ")} using mock sensors</span>
+            <TriangleAlert className="h-5 w-5 shrink-0" />
+          </div>
+        </div>
+      )}
 
       {/* Active Alerts */}
       {activeAlerts && activeAlerts.length > 0 && (
@@ -152,13 +170,24 @@ export function DashboardView({
         <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-4">
           {["radar", "audio", "bcg"].map((detector) => {
             const d = vitals?.detectors?.[detector];
+            const isMock = systemHealth?.components?.[detector]?.mock ?? false;
             return (
               <div
                 key={detector}
-                className="rounded-lg border bg-card p-4 flex items-center justify-between"
+                className={cn(
+                  "rounded-lg border bg-card p-4 flex items-center justify-between",
+                  isMock && "border-amber-500"
+                )}
               >
                 <div>
-                  <p className="font-medium capitalize">{detector} Detector</p>
+                  <p className="font-medium capitalize">
+                    {detector} Detector
+                    {isMock && (
+                      <span className="ml-2 px-1.5 py-0.5 text-[10px] font-bold uppercase rounded bg-amber-500 text-white">
+                        Mock
+                      </span>
+                    )}
+                  </p>
                   <p className="text-sm text-muted-foreground">
                     Confidence:{" "}
                     {d?.confidence ? `${Math.round(d.confidence * 100)}%` : "—"}

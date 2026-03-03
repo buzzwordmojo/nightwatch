@@ -41,6 +41,7 @@ export default defineSchema({
     component: v.string(), // "radar" | "audio" | "bcg" | "engine" | "notifier"
     status: v.string(), // "online" | "offline" | "error"
     message: v.optional(v.string()),
+    mock: v.optional(v.boolean()),
     updatedAt: v.number(),
   }).index("by_component", ["component"]),
 

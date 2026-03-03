@@ -345,10 +345,12 @@ async def run_nightwatch(
             try:
                 await convex_bridge.update_system_status("engine", "online", "Alert engine running")
                 for detector in detectors:
+                    is_mock = isinstance(detector, (MockRadarDetector, MockAudioDetector, MockBCGDetector))
                     await convex_bridge.update_system_status(
                         detector.name,
                         "online" if detector.is_running else "offline",
-                        f"{detector.name.title()} detector active"
+                        f"{'Mock ' if is_mock else ''}{detector.name.title()} detector active",
+                        mock=is_mock,
                     )
             except Exception as e:
                 print(f"Warning: Failed to update system status: {e}")

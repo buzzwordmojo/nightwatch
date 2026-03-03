@@ -7,6 +7,7 @@ export const updateStatus = mutation({
     component: v.string(),
     status: v.string(),
     message: v.optional(v.string()),
+    mock: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const existing = await ctx.db
@@ -18,6 +19,7 @@ export const updateStatus = mutation({
       component: args.component,
       status: args.status,
       message: args.message,
+      mock: args.mock ?? false,
       updatedAt: Date.now(),
     };
 
@@ -46,12 +48,17 @@ export const getHealth = query({
 
     let overall = "online";
     let lastUpdate = 0;
-    const componentMap: Record<string, { status: string; message?: string }> = {};
+    let hasMock = false;
+    const componentMap: Record<string, { status: string; message?: string; mock?: boolean }> = {};
 
     for (const comp of components) {
+      const isMock = comp.mock ?? false;
+      if (isMock) hasMock = true;
+
       componentMap[comp.component] = {
         status: comp.status,
         message: comp.message,
+        mock: isMock,
       };
 
       if (comp.updatedAt > lastUpdate) {
@@ -75,6 +82,7 @@ export const getHealth = query({
       overall,
       components: componentMap,
       lastUpdate,
+      mockMode: hasMock,
     };
   },
 });
