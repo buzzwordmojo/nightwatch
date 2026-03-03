@@ -1311,13 +1311,25 @@ class DashboardServer:
     _UPDATE_LOG = Path("/var/log/nightwatch/update.log")
     _UPDATE_SCRIPT = Path("/home/pi/nightwatch/scripts/self-update.sh")
 
+    def _git(self, *args: str, timeout: int = 30) -> subprocess.CompletedProcess:
+        """Run a git command in the repo dir as the pi user."""
+        return subprocess.run(
+            ["sudo", "-u", "pi", "git", "-C", str(self._REPO_DIR), *args],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+
     async def _update_check(self) -> dict[str, Any]:
         """Check if an update is available by comparing local vs remote HEAD."""
         repo_dir = self._REPO_DIR
-        if not (repo_dir / ".git").exists():
+
+        # Check for git repo (use sudo -u pi to avoid permission issues)
+        check = await asyncio.to_thread(self._git, "status", timeout=5)
+        if check.returncode != 0:
             return {
                 "available": False,
-                "error": "No git repo found",
+                "error": f"Git check failed: {check.stderr.strip()}" if check.stderr.strip() else "No git repo found",
                 "currentCommit": None,
                 "latestCommit": None,
                 "commitsBehind": 0,
@@ -1325,44 +1337,23 @@ class DashboardServer:
 
         try:
             # Fetch latest from remote
-            await asyncio.to_thread(
-                subprocess.run,
-                ["git", "fetch", "origin", "main"],
-                cwd=repo_dir,
-                capture_output=True,
-                timeout=30,
-            )
+            await asyncio.to_thread(self._git, "fetch", "origin", "main", timeout=30)
 
             # Get current HEAD
             current = await asyncio.to_thread(
-                subprocess.run,
-                ["git", "rev-parse", "--short", "HEAD"],
-                cwd=repo_dir,
-                capture_output=True,
-                text=True,
-                timeout=10,
+                self._git, "rev-parse", "--short", "HEAD", timeout=10,
             )
             current_commit = current.stdout.strip()
 
             # Get remote HEAD
             latest = await asyncio.to_thread(
-                subprocess.run,
-                ["git", "rev-parse", "--short", "origin/main"],
-                cwd=repo_dir,
-                capture_output=True,
-                text=True,
-                timeout=10,
+                self._git, "rev-parse", "--short", "origin/main", timeout=10,
             )
             latest_commit = latest.stdout.strip()
 
             # Count commits behind
             behind = await asyncio.to_thread(
-                subprocess.run,
-                ["git", "rev-list", "--count", "HEAD..origin/main"],
-                cwd=repo_dir,
-                capture_output=True,
-                text=True,
-                timeout=10,
+                self._git, "rev-list", "--count", "HEAD..origin/main", timeout=10,
             )
             commits_behind = int(behind.stdout.strip()) if behind.stdout.strip() else 0
 
