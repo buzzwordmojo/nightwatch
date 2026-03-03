@@ -9,6 +9,8 @@ import { AudioLevelMeter } from "@/components/dashboard/AudioLevelMeter";
 import { SensorStatusBar } from "@/components/dashboard/SensorStatusBar";
 import { Heart, Wind, Activity, Moon, Settings, Volume2, VolumeX } from "lucide-react";
 import Link from "next/link";
+import { useQuery } from "convex/react";
+import { api } from "../../../convex/_generated/api";
 import { cn, formatTime } from "@/lib/utils";
 import { useAudioMonitor } from "@/hooks/useAudioMonitor";
 
@@ -27,10 +29,12 @@ interface DashboardViewProps {
 function MockBadgeWrapper({ mock, children }: { mock: boolean; children: ReactNode }) {
   if (!mock) return children;
   return (
-    <div className="relative">
-      {children}
-      <div className="absolute top-1.5 right-10 px-1.5 py-0.5 rounded bg-amber-500 text-white text-[10px] font-bold uppercase tracking-wide">
+    <div className="overflow-hidden rounded-lg border border-amber-500/50">
+      <div className="bg-amber-500 text-white text-[10px] font-bold uppercase tracking-wider text-center py-0.5">
         Simulated
+      </div>
+      <div className="[&>*]:rounded-none [&>*]:border-0">
+        {children}
       </div>
     </div>
   );
@@ -47,6 +51,7 @@ export function DashboardView({
 }: DashboardViewProps) {
   const isLoading = vitals === undefined;
   const { isListening, toggle: toggleAudio } = useAudioMonitor();
+  const updateSettings = useQuery(api.settings.getUpdateSettings);
 
   const isMockSensor = (name: string) =>
     systemHealth?.components?.[name]?.mock ?? false;
@@ -58,7 +63,7 @@ export function DashboardView({
         <div className="flex items-center gap-3">
           <Moon className="h-8 w-8 text-primary" />
           <div>
-            <h1 className="text-2xl font-bold">Nightwatch <span className="text-xs text-muted-foreground">v2</span></h1>
+            <h1 className="text-2xl font-bold">Nightwatch {updateSettings?.current_commit && <span className="text-xs text-muted-foreground font-mono">{updateSettings.current_commit}</span>}</h1>
             <p className="text-sm text-muted-foreground">
               {vitals
                 ? `Last update: ${formatTime(vitals.timestamp)}`
