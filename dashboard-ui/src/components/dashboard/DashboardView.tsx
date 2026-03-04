@@ -29,8 +29,8 @@ interface DashboardViewProps {
 function MockBadgeWrapper({ mock, children }: { mock: boolean; children: ReactNode }) {
   if (!mock) return children;
   return (
-    <div className="overflow-hidden rounded-lg border border-amber-500/50">
-      <div className="bg-amber-500 text-white text-[10px] font-bold uppercase tracking-wider text-center py-0.5">
+    <div className="overflow-hidden rounded-lg border border-purple-500/50">
+      <div className="bg-purple-500 text-white text-[10px] font-bold uppercase tracking-wider text-center py-0.5">
         Simulated
       </div>
       <div className="[&>*]:rounded-none [&>*]:border-0">
@@ -56,6 +56,20 @@ export function DashboardView({
   const isMockSensor = (name: string) =>
     systemHealth?.components?.[name]?.mock ?? false;
 
+  // Transform Convex detector data to the format SensorStatusBar expects
+  const sensorStatus = vitals?.detectors
+    ? Object.fromEntries(
+        Object.entries(vitals.detectors).map(([name, d]: [string, any]) => [
+          name,
+          {
+            connected: true,
+            status: d.state === "normal" ? "running" : d.state,
+            signal: d.confidence != null ? Math.round(d.confidence * 100) : undefined,
+          },
+        ])
+      )
+    : undefined;
+
   return (
     <main className="min-h-screen p-4 md:p-8">
       {/* Header */}
@@ -71,13 +85,13 @@ export function DashboardView({
             </p>
           </div>
           <div className="hidden sm:block border-l pl-3 ml-1">
-            <SensorStatusBar detectors={vitals?.detectorStatus} mockComponents={systemHealth?.components} />
+            <SensorStatusBar detectors={sensorStatus} mockComponents={systemHealth?.components} />
           </div>
         </div>
 
         <div className="flex items-center gap-4">
           <div className="sm:hidden">
-            <SensorStatusBar detectors={vitals?.detectorStatus} mockComponents={systemHealth?.components} />
+            <SensorStatusBar detectors={sensorStatus} mockComponents={systemHealth?.components} />
           </div>
           <StatusIndicator
             status={systemHealth?.overall ?? "offline"}
@@ -214,14 +228,14 @@ export function DashboardView({
                 key={detector}
                 className={cn(
                   "rounded-lg border bg-card p-4 flex items-center justify-between",
-                  isMock && "border-amber-500"
+                  isMock && "border-purple-500"
                 )}
               >
                 <div>
                   <p className="font-medium capitalize">
                     {detector} Detector
                     {isMock && (
-                      <span className="ml-2 px-1.5 py-0.5 text-[10px] font-bold uppercase rounded bg-amber-500 text-white">
+                      <span className="ml-2 px-1.5 py-0.5 text-[10px] font-bold uppercase rounded bg-purple-500 text-white">
                         Mock
                       </span>
                     )}

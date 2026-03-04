@@ -10,12 +10,16 @@ Processes audio input to detect:
 
 from __future__ import annotations
 
+import logging
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import numpy as np
 from scipy import signal as scipy_signal
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -733,6 +737,120 @@ class SeizureSoundDetector:
         self._rhythmic_rate = None
 
 
+class NoiseReducer:
+    """
+    Spectral subtraction noise reducer.
+
+    Records background noise spectrum, then subtracts it from live audio
+    to remove steady-state noise (fans, hum, electrical static) while
+    preserving transient sounds (breathing).
+    """
+
+    def __init__(self, sample_rate: int = 16000):
+        self._sample_rate = sample_rate
+        self._noise_profile: np.ndarray | None = None
+        self._sampling = False
+        self._sample_chunks: list[np.ndarray] = []
+
+    @property
+    def has_profile(self) -> bool:
+        return self._noise_profile is not None
+
+    @property
+    def is_sampling(self) -> bool:
+        return self._sampling
+
+    def start_sampling(self) -> None:
+        """Begin collecting background noise samples."""
+        self._sampling = True
+        self._sample_chunks = []
+
+    def add_sample(self, chunk: np.ndarray) -> None:
+        """Add an audio chunk to the noise sample buffer."""
+        if self._sampling:
+            self._sample_chunks.append(chunk.copy())
+
+    def finish_sampling(self) -> bool:
+        """Compute median noise power spectrum from collected samples.
+
+        Returns True if a profile was successfully created.
+        """
+        self._sampling = False
+        if not self._sample_chunks:
+            return False
+
+        # Compute power spectrum for each chunk and take the median
+        spectra = []
+        for chunk in self._sample_chunks:
+            spectrum = np.abs(np.fft.rfft(chunk)) ** 2
+            spectra.append(spectrum)
+
+        # Align lengths (chunks may differ slightly)
+        min_len = min(len(s) for s in spectra)
+        spectra = [s[:min_len] for s in spectra]
+
+        self._noise_profile = np.median(np.array(spectra), axis=0)
+        self._sample_chunks = []
+        logger.info("Noise profile computed from %d chunks", len(spectra))
+        return True
+
+    def reduce(self, audio: np.ndarray) -> np.ndarray:
+        """Apply spectral subtraction to remove background noise.
+
+        If no profile is loaded, returns audio unchanged.
+        """
+        if self._noise_profile is None:
+            return audio
+
+        # FFT
+        spectrum = np.fft.rfft(audio)
+        power = np.abs(spectrum) ** 2
+        phase = np.angle(spectrum)
+
+        # Match lengths (in case chunk size differs from profile)
+        n = min(len(power), len(self._noise_profile))
+        noise = self._noise_profile[:n]
+
+        # Subtract noise power with spectral floor (avoid negative power)
+        clean_power = np.maximum(power[:n] - noise, power[:n] * 0.01)
+
+        # Reconstruct with original phase
+        clean_mag = np.sqrt(clean_power)
+        if len(spectrum) > n:
+            # Keep remaining bins unchanged
+            full_mag = np.abs(spectrum).copy()
+            full_mag[:n] = clean_mag
+            clean_spectrum = full_mag * np.exp(1j * phase)
+        else:
+            clean_spectrum = clean_mag * np.exp(1j * phase[:n])
+
+        return np.fft.irfft(clean_spectrum, n=len(audio)).astype(audio.dtype)
+
+    def save(self, path: Path) -> None:
+        """Save noise profile to disk."""
+        if self._noise_profile is not None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            np.save(str(path), self._noise_profile)
+            logger.info("Noise profile saved to %s", path)
+
+    def load(self, path: Path) -> bool:
+        """Load noise profile from disk. Returns True if loaded."""
+        if path.exists():
+            try:
+                self._noise_profile = np.load(str(path))
+                logger.info("Noise profile loaded from %s", path)
+                return True
+            except Exception as e:
+                logger.warning("Failed to load noise profile: %s", e)
+        return False
+
+    def clear(self) -> None:
+        """Clear the current noise profile."""
+        self._noise_profile = None
+        self._sample_chunks = []
+        self._sampling = False
+
+
 class AudioProcessor:
     """
     Main audio processing pipeline.
@@ -754,6 +872,7 @@ class AudioProcessor:
         self._silence = SilenceDetector(self._config)
         self._vocalization = VocalizationDetector(self._config)
         self._seizure = SeizureSoundDetector(self._config)
+        self._noise_reducer = NoiseReducer(self._config.sample_rate)
 
         self._chunk_samples = int(self._config.chunk_duration * self._config.sample_rate)
 
@@ -766,6 +885,11 @@ class AudioProcessor:
     def sample_rate(self) -> int:
         """Expected sample rate."""
         return self._config.sample_rate
+
+    @property
+    def noise_reducer(self) -> NoiseReducer:
+        """Access the noise reducer."""
+        return self._noise_reducer
 
     def process(self, audio: np.ndarray, timestamp: float) -> BreathingAnalysis:
         """
@@ -786,6 +910,9 @@ class AudioProcessor:
                 audio = audio.astype(np.float32) / 2147483648.0
             else:
                 audio = audio.astype(np.float32)
+
+        # Apply noise reduction (before all detectors)
+        audio = self._noise_reducer.reduce(audio)
 
         # Calculate overall energy
         energy_level = float(np.sqrt(np.mean(audio ** 2)))

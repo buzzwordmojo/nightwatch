@@ -8,7 +8,9 @@ vocalizations, and seizure-related rhythmic sounds during sleep.
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -21,6 +23,8 @@ from nightwatch.detectors.audio.processing import (
     AudioProcessorConfig,
     BreathingAnalysis,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class AudioDetector(BaseDetector):
@@ -78,6 +82,9 @@ class AudioDetector(BaseDetector):
         # Live audio listeners (for dashboard streaming)
         self._audio_listeners: set[asyncio.Queue] = set()
 
+        # Noise reduction
+        self._noise_profile_path = Path("/var/lib/nightwatch/noise_profile.npy")
+
         # State
         self._device_name: str | None = None
         self._last_analysis: BreathingAnalysis | None = None
@@ -124,6 +131,10 @@ class AudioDetector(BaseDetector):
                 pass  # Ignore buffer warnings for now
             # Copy to avoid buffer reuse issues
             self._audio_buffer.put_nowait(indata.copy().flatten())
+
+        # Load saved noise profile if it exists
+        if self._noise_profile_path.exists():
+            self._processor.noise_reducer.load(self._noise_profile_path)
 
         # Open stream
         try:
@@ -175,6 +186,10 @@ class AudioDetector(BaseDetector):
                 # Apply software gain (amplify quiet signals)
                 if self._config.gain != 1.0:
                     audio = np.clip(audio * self._config.gain, -1.0, 1.0)
+
+                # Feed noise reducer if sampling
+                if self._processor.noise_reducer.is_sampling:
+                    self._processor.noise_reducer.add_sample(audio)
 
                 # Fan out to live audio listeners
                 for listener in list(self._audio_listeners):
@@ -254,6 +269,34 @@ class AudioDetector(BaseDetector):
                 "seizure_confidence": round(analysis.seizure_confidence, 2),
             },
         )
+
+    async def sample_noise(self, duration: float = 5.0) -> bool:
+        """Sample background noise and build a spectral subtraction profile.
+
+        Args:
+            duration: Seconds to sample (default 5s)
+
+        Returns:
+            True if profile was created successfully.
+        """
+        reducer = self._processor.noise_reducer
+        reducer.start_sampling()
+        logger.info("Noise sampling started for %.1fs", duration)
+        await asyncio.sleep(duration)
+        ok = reducer.finish_sampling()
+        if ok:
+            reducer.save(self._noise_profile_path)
+            logger.info("Noise profile saved")
+        else:
+            logger.warning("Noise sampling failed — no samples collected")
+        return ok
+
+    def clear_noise_profile(self) -> None:
+        """Clear the noise reduction profile and delete the saved file."""
+        self._processor.noise_reducer.clear()
+        if self._noise_profile_path.exists():
+            self._noise_profile_path.unlink()
+            logger.info("Noise profile deleted")
 
     async def _calibrate_impl(self) -> CalibrationResult:
         """

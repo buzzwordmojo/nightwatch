@@ -6,7 +6,7 @@ import { api } from "../../../../../convex/_generated/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
-import { Mic, Volume2, Activity, Radio, RefreshCw } from "lucide-react";
+import { Mic, Volume2, Activity, Radio, RefreshCw, AudioWaveform } from "lucide-react";
 
 export default function AudioSettingsPage() {
   const audioSettings = useQuery(api.settings.getAudioSettings);
@@ -20,6 +20,50 @@ export default function AudioSettingsPage() {
   const [freqMax, setFreqMax] = useState(1200);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
+
+  // Noise reduction state
+  const [noiseSampling, setNoiseSampling] = useState(false);
+  const [noiseStatus, setNoiseStatus] = useState<{
+    active: boolean;
+    sampling: boolean;
+    available: boolean;
+  } | null>(null);
+
+  const fetchNoiseStatus = async () => {
+    try {
+      const res = await fetch("/api/audio/noise-status");
+      if (res.ok) setNoiseStatus(await res.json());
+    } catch {}
+  };
+
+  useEffect(() => {
+    fetchNoiseStatus();
+  }, []);
+
+  const handleSampleNoise = async () => {
+    setNoiseSampling(true);
+    try {
+      await fetch("/api/audio/sample-noise", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ duration: 5 }),
+      });
+      await fetchNoiseStatus();
+    } catch (e) {
+      console.error("Noise sampling failed:", e);
+    } finally {
+      setNoiseSampling(false);
+    }
+  };
+
+  const handleClearNoise = async () => {
+    try {
+      await fetch("/api/audio/clear-noise", { method: "POST" });
+      await fetchNoiseStatus();
+    } catch (e) {
+      console.error("Failed to clear noise profile:", e);
+    }
+  };
 
   // Load settings when they arrive
   useEffect(() => {
@@ -95,6 +139,51 @@ export default function AudioSettingsPage() {
           </p>
         </CardContent>
       </Card>
+
+      {/* Background Noise Reduction */}
+      {noiseStatus?.available && (
+        <Card>
+          <CardContent className="p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-medium flex items-center gap-2">
+                <AudioWaveform className="h-4 w-4" />
+                Background Noise Reduction
+              </h3>
+              {noiseStatus.active && (
+                <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-green-500/15 text-green-500">
+                  Active
+                </span>
+              )}
+            </div>
+            <p className="text-sm text-muted-foreground mb-4">
+              Sample the room&apos;s background noise to subtract it from live
+              audio. Keep the room quiet during sampling — no talking or
+              movement.
+            </p>
+            <div className="flex gap-3">
+              <Button
+                onClick={handleSampleNoise}
+                disabled={noiseSampling}
+                variant={noiseStatus.active ? "outline" : "default"}
+              >
+                {noiseSampling ? (
+                  <>
+                    <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                    Sampling...
+                  </>
+                ) : (
+                  noiseStatus.active ? "Re-sample" : "Sample Background Noise"
+                )}
+              </Button>
+              {noiseStatus.active && (
+                <Button variant="outline" onClick={handleClearNoise}>
+                  Clear Profile
+                </Button>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Gain Control */}
       <Card>

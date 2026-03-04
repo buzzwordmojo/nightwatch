@@ -196,10 +196,18 @@ class DashboardServer:
         self._app.post("/api/audio/apply-settings")(self._apply_audio_settings)
         self._app.get("/api/audio/settings")(self._get_audio_settings)
 
+        # Audio noise reduction
+        self._app.post("/api/audio/sample-noise")(self._sample_noise)
+        self._app.post("/api/audio/clear-noise")(self._clear_noise)
+        self._app.get("/api/audio/noise-status")(self._noise_status)
+
         # OTA update routes
         self._app.post("/api/update/check")(self._update_check)
         self._app.post("/api/update/apply")(self._update_apply)
         self._app.get("/api/update/status")(self._update_status)
+
+        # Sensor restart
+        self._app.post("/api/sensors/{name}/restart")(self._restart_sensor)
 
         # Live audio streaming
         self._app.websocket("/ws/audio")(self._audio_stream_endpoint)
@@ -1108,6 +1116,25 @@ class DashboardServer:
         }
 
     # ========================================================================
+    # Sensor Restart
+    # ========================================================================
+
+    async def _restart_sensor(self, name: str) -> dict[str, Any]:
+        """Restart a detector by name (stop + start)."""
+        detector = self._detectors.get(name)
+        if not detector:
+            raise HTTPException(status_code=404, detail=f"Unknown detector: {name}")
+        try:
+            logging.info("Restarting detector: %s", name)
+            await detector.stop()
+            await detector.start()
+            logging.info("Detector restarted successfully: %s", name)
+            return {"status": "ok", "detector": name}
+        except Exception as e:
+            logging.exception("Failed to restart detector: %s", name)
+            raise HTTPException(status_code=500, detail=str(e))
+
+    # ========================================================================
     # Setup Wizard Endpoints
     # ========================================================================
 
@@ -1226,6 +1253,45 @@ class DashboardServer:
             "silence_threshold": audio.get("silence_threshold", 0.005),
             "breathing_freq_min_hz": audio.get("breathing_freq_min_hz", 200.0),
             "breathing_freq_max_hz": audio.get("breathing_freq_max_hz", 800.0),
+        }
+
+    async def _sample_noise(self, request: Request) -> dict[str, Any]:
+        """Trigger background noise sampling on the audio detector."""
+        audio_detector = self._detectors.get("audio")
+        if audio_detector is None or not hasattr(audio_detector, "sample_noise"):
+            raise HTTPException(status_code=400, detail="Audio detector not available")
+
+        body = {}
+        try:
+            body = await request.json()
+        except Exception:
+            pass
+        duration = body.get("duration", 5.0)
+        duration = max(1.0, min(30.0, float(duration)))
+
+        ok = await audio_detector.sample_noise(duration=duration)
+        return {"success": ok}
+
+    async def _clear_noise(self) -> dict[str, Any]:
+        """Clear the noise reduction profile."""
+        audio_detector = self._detectors.get("audio")
+        if audio_detector is None or not hasattr(audio_detector, "clear_noise_profile"):
+            raise HTTPException(status_code=400, detail="Audio detector not available")
+
+        audio_detector.clear_noise_profile()
+        return {"success": True}
+
+    async def _noise_status(self) -> dict[str, Any]:
+        """Get noise reduction status."""
+        audio_detector = self._detectors.get("audio")
+        if audio_detector is None or not hasattr(audio_detector, "_processor"):
+            return {"active": False, "sampling": False, "available": False}
+
+        reducer = audio_detector._processor.noise_reducer
+        return {
+            "active": reducer.has_profile,
+            "sampling": reducer.is_sampling,
+            "available": True,
         }
 
     async def _apply_audio_settings(self, request: Request) -> dict[str, Any]:

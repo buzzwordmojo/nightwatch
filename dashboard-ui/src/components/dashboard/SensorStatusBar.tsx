@@ -41,12 +41,15 @@ function getStatusColor(status?: SensorStatus): string {
   switch (status.status) {
     case "running":
     case "online":
+    case "normal":
       return "bg-green-500"; // green - healthy
     case "warning":
     case "degraded":
+    case "uncertain":
       return "bg-yellow-500"; // yellow - warning
     case "error":
     case "critical":
+    case "alert":
       return "bg-red-500"; // red - error
     default:
       return "bg-muted-foreground/50"; // gray - unknown
@@ -77,7 +80,7 @@ export function SensorStatusBar({ detectors, mockComponents }: SensorStatusBarPr
         {sensorConfig.map(({ key, label, icon: Icon }) => {
           const sensor = detectors?.[key as keyof typeof detectors];
           const isMock = mockComponents?.[key]?.mock ?? false;
-          const statusColor = isMock ? "bg-amber-500" : getStatusColor(sensor);
+          const statusColor = isMock ? "bg-purple-500" : getStatusColor(sensor);
           const isConnected = sensor?.connected ?? false;
 
           return (
@@ -94,13 +97,13 @@ export function SensorStatusBar({ detectors, mockComponents }: SensorStatusBarPr
                     className={cn(
                       "w-1.5 h-1.5 rounded-full shrink-0",
                       statusColor,
-                      isConnected && sensor?.status === "running" && !isMock && "animate-pulse"
+                      isConnected && (sensor?.status === "running" || sensor?.status === "normal") && !isMock && "animate-pulse"
                     )}
                   />
                   <Icon className="w-3 h-3 hidden sm:block" />
                   <span className="hidden md:inline">{label}</span>
                   {isMock && (
-                    <span className="px-1 py-px text-[9px] font-bold leading-none rounded bg-amber-500 text-white">
+                    <span className="px-1 py-px text-[9px] font-bold leading-none rounded bg-purple-500 text-white">
                       SIM
                     </span>
                   )}
@@ -117,7 +120,7 @@ export function SensorStatusBar({ detectors, mockComponents }: SensorStatusBarPr
                       <span>Status:</span>
                       <span className={cn(
                         "capitalize",
-                        isMock ? "text-amber-500" : isConnected ? "text-green-500" : "text-red-500"
+                        isMock ? "text-purple-500" : isConnected ? "text-green-500" : "text-red-500"
                       )}>
                         {isMock ? "simulated" : isConnected ? (sensor?.status ?? "connected") : "offline"}
                       </span>
