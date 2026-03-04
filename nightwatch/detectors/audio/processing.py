@@ -751,10 +751,19 @@ class NoiseReducer:
         self._noise_profile: np.ndarray | None = None
         self._sampling = False
         self._sample_chunks: list[np.ndarray] = []
+        self._enabled = True
 
     @property
     def has_profile(self) -> bool:
         return self._noise_profile is not None
+
+    @property
+    def enabled(self) -> bool:
+        return self._enabled
+
+    @enabled.setter
+    def enabled(self, value: bool) -> None:
+        self._enabled = value
 
     @property
     def is_sampling(self) -> bool:
@@ -797,9 +806,9 @@ class NoiseReducer:
     def reduce(self, audio: np.ndarray) -> np.ndarray:
         """Apply spectral subtraction to remove background noise.
 
-        If no profile is loaded, returns audio unchanged.
+        If no profile is loaded or reduction is disabled, returns audio unchanged.
         """
-        if self._noise_profile is None:
+        if self._noise_profile is None or not self._enabled:
             return audio
 
         # FFT
@@ -843,6 +852,106 @@ class NoiseReducer:
             except Exception as e:
                 logger.warning("Failed to load noise profile: %s", e)
         return False
+
+    def get_profile_info(self) -> dict | None:
+        """Analyze the stored noise profile and return characteristics.
+
+        Returns None if no profile is loaded.
+        """
+        if self._noise_profile is None:
+            return None
+
+        profile = self._noise_profile
+        n_bins = len(profile)
+        freqs = np.fft.rfftfreq(2 * (n_bins - 1), d=1.0 / self._sample_rate)
+        freqs = freqs[:n_bins]
+
+        # Overall noise power in dB (relative)
+        total_power = float(np.sum(profile))
+        overall_db = round(10 * np.log10(total_power + 1e-12), 1)
+
+        # Band energy: low (0-500Hz), mid (500-2kHz), high (2k+)
+        low_mask = freqs < 500
+        mid_mask = (freqs >= 500) & (freqs < 2000)
+        high_mask = freqs >= 2000
+
+        low_energy = float(np.sum(profile[low_mask])) if np.any(low_mask) else 0
+        mid_energy = float(np.sum(profile[mid_mask])) if np.any(mid_mask) else 0
+        high_energy = float(np.sum(profile[high_mask])) if np.any(high_mask) else 0
+        band_total = low_energy + mid_energy + high_energy
+        if band_total > 0:
+            band_energy = {
+                "low": round(low_energy / band_total * 100, 1),
+                "mid": round(mid_energy / band_total * 100, 1),
+                "high": round(high_energy / band_total * 100, 1),
+            }
+        else:
+            band_energy = {"low": 0, "mid": 0, "high": 0}
+
+        # Find top 3 dominant frequency peaks
+        # Smooth spectrum slightly to avoid picking noise spikes
+        from scipy.signal import find_peaks
+        smooth = np.convolve(profile, np.ones(3) / 3, mode="same")
+        peak_indices, properties = find_peaks(smooth, prominence=np.max(smooth) * 0.05)
+
+        dominant_freqs = []
+        if len(peak_indices) > 0:
+            prominences = properties["prominences"]
+            top_indices = peak_indices[np.argsort(prominences)[-3:][::-1]]
+            for idx in top_indices:
+                hz = float(freqs[idx])
+                db = round(10 * np.log10(profile[idx] + 1e-12) - overall_db, 1)
+                label = self._label_frequency(hz)
+                dominant_freqs.append({"hz": round(hz, 1), "db": db, "label": label})
+
+        # Classify noise type
+        noise_type = self._classify_noise(band_energy, dominant_freqs)
+
+        return {
+            "overall_db": overall_db,
+            "dominant_freqs": dominant_freqs,
+            "band_energy": band_energy,
+            "noise_type": noise_type,
+        }
+
+    @staticmethod
+    def _label_frequency(hz: float) -> str:
+        if 50 <= hz <= 65:
+            return "Electrical hum"
+        if 100 <= hz <= 130:
+            return "Electrical harmonic"
+        if 200 <= hz <= 800:
+            return "Fan / HVAC"
+        if 800 <= hz <= 3000:
+            return "Hiss / static"
+        return "Other"
+
+    @staticmethod
+    def _classify_noise(
+        band_energy: dict[str, float],
+        dominant_freqs: list[dict],
+    ) -> str:
+        labels = [f["label"] for f in dominant_freqs]
+        has_hum = any(l in ("Electrical hum", "Electrical harmonic") for l in labels)
+
+        # Check if spectrum is roughly flat
+        lo, mid, hi = band_energy["low"], band_energy["mid"], band_energy["high"]
+        spread = max(lo, mid, hi) - min(lo, mid, hi)
+        is_flat = spread < 25  # less than 25 percentage points difference
+
+        if is_flat and has_hum:
+            return "Broadband noise with electrical hum"
+        if is_flat:
+            return "Broadband noise"
+        if has_hum and lo > 50:
+            return "Low-frequency hum"
+        if mid > 40 and any(l == "Fan / HVAC" for l in labels):
+            return "Mid-range fan noise"
+        if hi > 40:
+            return "High-frequency hiss"
+        if lo > 50:
+            return "Low-frequency rumble"
+        return "Mixed noise"
 
     def clear(self) -> None:
         """Clear the current noise profile."""
@@ -910,9 +1019,6 @@ class AudioProcessor:
                 audio = audio.astype(np.float32) / 2147483648.0
             else:
                 audio = audio.astype(np.float32)
-
-        # Apply noise reduction (before all detectors)
-        audio = self._noise_reducer.reduce(audio)
 
         # Calculate overall energy
         energy_level = float(np.sqrt(np.mean(audio ** 2)))

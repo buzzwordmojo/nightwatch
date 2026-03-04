@@ -191,7 +191,10 @@ class AudioDetector(BaseDetector):
                 if self._processor.noise_reducer.is_sampling:
                     self._processor.noise_reducer.add_sample(audio)
 
-                # Fan out to live audio listeners
+                # Apply noise reduction so detectors and listeners see clean audio
+                audio = self._processor.noise_reducer.reduce(audio)
+
+                # Fan out to live audio listeners (post noise reduction)
                 for listener in list(self._audio_listeners):
                     try:
                         listener.put_nowait(audio)
@@ -290,6 +293,10 @@ class AudioDetector(BaseDetector):
         else:
             logger.warning("Noise sampling failed — no samples collected")
         return ok
+
+    def set_noise_enabled(self, enabled: bool) -> None:
+        """Enable or disable noise reduction without clearing the profile."""
+        self._processor.noise_reducer.enabled = enabled
 
     def clear_noise_profile(self) -> None:
         """Clear the noise reduction profile and delete the saved file."""

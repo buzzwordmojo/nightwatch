@@ -6,7 +6,23 @@ import { api } from "../../../../../convex/_generated/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
-import { Mic, Volume2, Activity, Radio, RefreshCw, AudioWaveform } from "lucide-react";
+import { Mic, Volume2, VolumeX, Activity, Radio, RefreshCw, AudioWaveform } from "lucide-react";
+import { useAudioMonitor } from "@/hooks/useAudioMonitor";
+
+interface NoiseProfile {
+  overall_db: number;
+  dominant_freqs: { hz: number; db: number; label: string }[];
+  band_energy: { low: number; mid: number; high: number };
+  noise_type: string;
+}
+
+interface NoiseStatus {
+  active: boolean;
+  sampling: boolean;
+  available: boolean;
+  enabled: boolean;
+  profile?: NoiseProfile;
+}
 
 export default function AudioSettingsPage() {
   const audioSettings = useQuery(api.settings.getAudioSettings);
@@ -21,13 +37,12 @@ export default function AudioSettingsPage() {
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
 
+  // Live listen
+  const { isListening, toggle: toggleListen } = useAudioMonitor();
+
   // Noise reduction state
   const [noiseSampling, setNoiseSampling] = useState(false);
-  const [noiseStatus, setNoiseStatus] = useState<{
-    active: boolean;
-    sampling: boolean;
-    available: boolean;
-  } | null>(null);
+  const [noiseStatus, setNoiseStatus] = useState<NoiseStatus | null>(null);
 
   const fetchNoiseStatus = async () => {
     try {
@@ -62,6 +77,21 @@ export default function AudioSettingsPage() {
       await fetchNoiseStatus();
     } catch (e) {
       console.error("Failed to clear noise profile:", e);
+    }
+  };
+
+  const handleToggleNoiseEnabled = async () => {
+    if (!noiseStatus) return;
+    const newEnabled = !noiseStatus.enabled;
+    try {
+      await fetch("/api/audio/noise-enabled", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: newEnabled }),
+      });
+      setNoiseStatus((prev) => prev ? { ...prev, enabled: newEnabled } : prev);
+    } catch (e) {
+      console.error("Failed to toggle noise reduction:", e);
     }
   };
 
@@ -116,9 +146,29 @@ export default function AudioSettingsPage() {
               <Mic className="h-4 w-4" />
               Live Audio Level
             </h3>
-            <span className="text-2xl font-mono">
-              {Math.round(currentLevel * 100)}%
-            </span>
+            <div className="flex items-center gap-3">
+              <span className="text-2xl font-mono">
+                {Math.round(currentLevel * 100)}%
+              </span>
+              <Button
+                size="sm"
+                variant={isListening ? "default" : "outline"}
+                onClick={toggleListen}
+                className="gap-1.5"
+              >
+                {isListening ? (
+                  <>
+                    <Volume2 className="h-3.5 w-3.5 animate-pulse" />
+                    <span>Live</span>
+                  </>
+                ) : (
+                  <>
+                    <VolumeX className="h-3.5 w-3.5" />
+                    <span>Listen</span>
+                  </>
+                )}
+              </Button>
+            </div>
           </div>
           <div className="h-4 bg-secondary rounded-full overflow-hidden">
             <div
@@ -135,7 +185,9 @@ export default function AudioSettingsPage() {
             />
           </div>
           <p className="text-xs text-muted-foreground mt-2">
-            Speak or breathe near the mic to test sensitivity
+            {isListening
+              ? "Listening — audio is playing through your speakers"
+              : "Speak or breathe near the mic to test sensitivity"}
           </p>
         </CardContent>
       </Card>
@@ -150,9 +202,16 @@ export default function AudioSettingsPage() {
                 Background Noise Reduction
               </h3>
               {noiseStatus.active && (
-                <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-green-500/15 text-green-500">
-                  Active
-                </span>
+                <button
+                  onClick={handleToggleNoiseEnabled}
+                  className={`text-xs font-medium px-2 py-0.5 rounded-full cursor-pointer transition-colors ${
+                    noiseStatus.enabled
+                      ? "bg-green-500/15 text-green-500 hover:bg-green-500/25"
+                      : "bg-muted text-muted-foreground hover:bg-muted/80"
+                  }`}
+                >
+                  {noiseStatus.enabled ? "Active" : "Paused"}
+                </button>
               )}
             </div>
             <p className="text-sm text-muted-foreground mb-4">
@@ -181,6 +240,55 @@ export default function AudioSettingsPage() {
                 </Button>
               )}
             </div>
+
+            {/* Noise Profile Characteristics */}
+            {noiseStatus.active && noiseStatus.profile && (
+              <div className="mt-5 pt-4 border-t border-border space-y-3">
+                <p className="text-sm font-medium">{noiseStatus.profile.noise_type}</p>
+
+                {/* Band Energy Bar */}
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1.5">Frequency distribution</p>
+                  <div className="flex h-3 rounded-full overflow-hidden">
+                    <div
+                      className="bg-blue-500"
+                      style={{ width: `${noiseStatus.profile.band_energy.low}%` }}
+                      title={`Low: ${noiseStatus.profile.band_energy.low}%`}
+                    />
+                    <div
+                      className="bg-amber-500"
+                      style={{ width: `${noiseStatus.profile.band_energy.mid}%` }}
+                      title={`Mid: ${noiseStatus.profile.band_energy.mid}%`}
+                    />
+                    <div
+                      className="bg-rose-500"
+                      style={{ width: `${noiseStatus.profile.band_energy.high}%` }}
+                      title={`High: ${noiseStatus.profile.band_energy.high}%`}
+                    />
+                  </div>
+                  <div className="flex justify-between text-[10px] text-muted-foreground mt-1">
+                    <span>Low &lt;500 Hz ({noiseStatus.profile.band_energy.low}%)</span>
+                    <span>Mid ({noiseStatus.profile.band_energy.mid}%)</span>
+                    <span>High 2k+ Hz ({noiseStatus.profile.band_energy.high}%)</span>
+                  </div>
+                </div>
+
+                {/* Dominant Frequencies */}
+                {noiseStatus.profile.dominant_freqs.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {noiseStatus.profile.dominant_freqs.map((f, i) => (
+                      <span
+                        key={i}
+                        className="text-xs px-2 py-0.5 rounded-full bg-secondary text-secondary-foreground"
+                        title={f.label}
+                      >
+                        {Math.round(f.hz)} Hz
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </CardContent>
         </Card>
       )}

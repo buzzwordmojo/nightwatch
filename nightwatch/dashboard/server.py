@@ -200,6 +200,7 @@ class DashboardServer:
         self._app.post("/api/audio/sample-noise")(self._sample_noise)
         self._app.post("/api/audio/clear-noise")(self._clear_noise)
         self._app.get("/api/audio/noise-status")(self._noise_status)
+        self._app.post("/api/audio/noise-enabled")(self._set_noise_enabled)
 
         # OTA update routes
         self._app.post("/api/update/check")(self._update_check)
@@ -1285,14 +1286,30 @@ class DashboardServer:
         """Get noise reduction status."""
         audio_detector = self._detectors.get("audio")
         if audio_detector is None or not hasattr(audio_detector, "_processor"):
-            return {"active": False, "sampling": False, "available": False}
+            return {"active": False, "sampling": False, "available": False, "enabled": False}
 
         reducer = audio_detector._processor.noise_reducer
-        return {
+        result: dict[str, Any] = {
             "active": reducer.has_profile,
             "sampling": reducer.is_sampling,
             "available": True,
+            "enabled": reducer.enabled,
         }
+        profile_info = reducer.get_profile_info()
+        if profile_info is not None:
+            result["profile"] = profile_info
+        return result
+
+    async def _set_noise_enabled(self, request: Request) -> dict[str, Any]:
+        """Enable or disable noise reduction."""
+        audio_detector = self._detectors.get("audio")
+        if audio_detector is None or not hasattr(audio_detector, "set_noise_enabled"):
+            raise HTTPException(status_code=400, detail="Audio detector not available")
+
+        body = await request.json()
+        enabled = bool(body.get("enabled", True))
+        audio_detector.set_noise_enabled(enabled)
+        return {"success": True, "enabled": enabled}
 
     async def _apply_audio_settings(self, request: Request) -> dict[str, Any]:
         """Apply audio settings from Convex to config file and restart detector."""
