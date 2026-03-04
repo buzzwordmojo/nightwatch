@@ -1,12 +1,12 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../../../../convex/_generated/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
-import { Mic, Volume2, VolumeX, Activity, Radio, RefreshCw, AudioWaveform } from "lucide-react";
+import { Mic, Volume2, VolumeX, Activity, Radio, RefreshCw, AudioWaveform, Wand2, Check, Wind, Timer } from "lucide-react";
 import { useAudioMonitor } from "@/hooks/useAudioMonitor";
 
 interface NoiseProfile {
@@ -22,6 +22,20 @@ interface NoiseStatus {
   available: boolean;
   enabled: boolean;
   profile?: NoiseProfile;
+}
+
+interface AutoTuneRecommendations {
+  gain: number;
+  silence_threshold: number;
+  breathing_threshold: number;
+}
+
+interface AutoTuneResult {
+  success: boolean;
+  error?: string;
+  recommendations?: AutoTuneRecommendations;
+  statistics?: Record<string, number>;
+  noise_profile_updated?: boolean;
 }
 
 export default function AudioSettingsPage() {
@@ -43,6 +57,31 @@ export default function AudioSettingsPage() {
   // Noise reduction state
   const [noiseSampling, setNoiseSampling] = useState(false);
   const [noiseStatus, setNoiseStatus] = useState<NoiseStatus | null>(null);
+
+  // Auto-tune state
+  const [tuning, setTuning] = useState(false);
+  const [tunePhase, setTunePhase] = useState("");
+  const [tuneProgress, setTuneProgress] = useState(0);
+  const [tuneResult, setTuneResult] = useState<AutoTuneResult | null>(null);
+  const tuneTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Live preview debounce
+  const previewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const previewSettings = useCallback((g: number, bt: number, st: number) => {
+    if (previewTimerRef.current) clearTimeout(previewTimerRef.current);
+    previewTimerRef.current = setTimeout(() => {
+      fetch("/api/audio/preview-settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          gain: g,
+          breathing_threshold: bt,
+          silence_threshold: st,
+        }),
+      }).catch(() => {});
+    }, 200);
+  }, []);
 
   const fetchNoiseStatus = async () => {
     try {
@@ -118,8 +157,12 @@ export default function AudioSettingsPage() {
         breathing_freq_max_hz: freqMax,
       });
       setDirty(false);
-      // Trigger backend to apply settings
-      await fetch("/api/audio/apply-settings", { method: "POST" });
+      // Settings are already live via preview — persist to YAML without restart
+      await fetch("/api/audio/apply-settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ restart: false }),
+      });
     } catch (e) {
       console.error("Failed to save settings:", e);
     } finally {
@@ -127,7 +170,62 @@ export default function AudioSettingsPage() {
     }
   };
 
+  // Auto-tune
+  const handleAutoTune = async () => {
+    setTuning(true);
+    setTuneResult(null);
+    setTuneProgress(0);
+    setTunePhase("Sampling noise...");
+
+    // Frontend progress timer (~22s total)
+    const startTime = Date.now();
+    const totalMs = 22000;
+    tuneTimerRef.current = setInterval(() => {
+      const elapsed = Date.now() - startTime;
+      const pct = Math.min(99, (elapsed / totalMs) * 100);
+      setTuneProgress(pct);
+      if (elapsed < 5000) {
+        setTunePhase("Sampling noise...");
+      } else if (elapsed < 20000) {
+        setTunePhase("Collecting stats...");
+      } else {
+        setTunePhase("Calculating...");
+      }
+    }, 200);
+
+    try {
+      const res = await fetch("/api/audio/auto-tune", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      const result: AutoTuneResult = await res.json();
+      setTuneResult(result);
+      setTuneProgress(100);
+      setTunePhase(result.success ? "Complete" : "Failed");
+    } catch (e) {
+      console.error("Auto-tune failed:", e);
+      setTuneResult({ success: false, error: "Request failed" });
+      setTunePhase("Failed");
+    } finally {
+      if (tuneTimerRef.current) clearInterval(tuneTimerRef.current);
+      setTuning(false);
+    }
+  };
+
+  const handleApplyRecommendations = () => {
+    if (!tuneResult?.recommendations) return;
+    const rec = tuneResult.recommendations;
+    setGain(rec.gain);
+    setBreathingThreshold(rec.breathing_threshold);
+    setSilenceThreshold(rec.silence_threshold);
+    setDirty(true);
+    previewSettings(rec.gain, rec.breathing_threshold, rec.silence_threshold);
+    setTuneResult(null);
+  };
+
   const currentLevel = vitals?.detectors?.audio?.value?.breathing_amplitude ?? 0;
+  const audioValue = vitals?.detectors?.audio?.value;
 
   return (
     <div className="space-y-6">
@@ -188,6 +286,48 @@ export default function AudioSettingsPage() {
             {isListening
               ? "Listening — audio is playing through your speakers"
               : "Speak or breathe near the mic to test sensitivity"}
+          </p>
+        </CardContent>
+      </Card>
+
+      {/* Detection Status (real-time) */}
+      <Card>
+        <CardContent className="p-6">
+          <h3 className="font-medium flex items-center gap-2 mb-4">
+            <Activity className="h-4 w-4" />
+            Detection Status
+          </h3>
+          <div className="grid grid-cols-3 gap-4">
+            <div className="text-center">
+              <div className={`text-2xl font-mono ${audioValue?.breathing_detected ? "text-green-500" : "text-muted-foreground"}`}>
+                {audioValue?.breathing_detected ? (
+                  <Wind className="h-6 w-6 mx-auto" />
+                ) : (
+                  <span className="text-sm">--</span>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">Breathing</p>
+              {audioValue?.breathing_rate && (
+                <p className="text-sm font-mono">{audioValue.breathing_rate} bpm</p>
+              )}
+            </div>
+            <div className="text-center">
+              <div className="text-2xl font-mono">
+                <Timer className={`h-6 w-6 mx-auto ${(audioValue?.silence_duration ?? 0) > 5 ? "text-amber-500" : "text-muted-foreground"}`} />
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">Silence</p>
+              <p className="text-sm font-mono">{audioValue?.silence_duration ?? 0}s</p>
+            </div>
+            <div className="text-center">
+              <div className={`text-2xl font-mono ${audioValue?.vocalization_detected ? "text-amber-500" : "text-muted-foreground"}`}>
+                <Mic className={`h-6 w-6 mx-auto ${audioValue?.vocalization_detected ? "text-amber-500" : "text-muted-foreground"}`} />
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">Vocalization</p>
+              <p className="text-sm font-mono">{audioValue?.vocalization_detected ? "Yes" : "No"}</p>
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground mt-3 text-center">
+            Updates in real-time as you adjust thresholds below
           </p>
         </CardContent>
       </Card>
@@ -313,6 +453,7 @@ export default function AudioSettingsPage() {
             onValueChange={([v]: number[]) => {
               setGain(v);
               setDirty(true);
+              previewSettings(v, breathingThreshold, silenceThreshold);
             }}
             min={1}
             max={100}
@@ -345,8 +486,10 @@ export default function AudioSettingsPage() {
             <Slider
               value={[breathingThreshold * 1000]}
               onValueChange={([v]: number[]) => {
-                setBreathingThreshold(v / 1000);
+                const bt = v / 1000;
+                setBreathingThreshold(bt);
                 setDirty(true);
+                previewSettings(gain, bt, silenceThreshold);
               }}
               min={0.5}
               max={50}
@@ -375,8 +518,10 @@ export default function AudioSettingsPage() {
             <Slider
               value={[silenceThreshold * 1000]}
               onValueChange={([v]: number[]) => {
-                setSilenceThreshold(v / 1000);
+                const st = v / 1000;
+                setSilenceThreshold(st);
                 setDirty(true);
+                previewSettings(gain, breathingThreshold, st);
               }}
               min={0.1}
               max={20}
@@ -441,6 +586,90 @@ export default function AudioSettingsPage() {
         </CardContent>
       </Card>
 
+      {/* Auto-Tune */}
+      <Card>
+        <CardContent className="p-6">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-medium flex items-center gap-2">
+              <Wand2 className="h-4 w-4" />
+              Auto-Tune
+            </h3>
+          </div>
+          <p className="text-sm text-muted-foreground mb-4">
+            Automatically calibrate gain and detection thresholds based on your
+            room&apos;s ambient noise. Takes about 22 seconds.
+          </p>
+
+          {/* Progress bar during tuning */}
+          {(tuning || tuneProgress > 0) && !tuneResult && (
+            <div className="mb-4">
+              <div className="flex justify-between text-xs text-muted-foreground mb-1">
+                <span>{tunePhase}</span>
+                <span>{Math.round(tuneProgress)}%</span>
+              </div>
+              <div className="h-2 bg-secondary rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-primary transition-all duration-200 rounded-full"
+                  style={{ width: `${tuneProgress}%` }}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Results */}
+          {tuneResult && tuneResult.success && tuneResult.recommendations && (
+            <div className="mb-4 p-4 bg-secondary/50 rounded-lg space-y-3">
+              <p className="text-sm font-medium flex items-center gap-1.5">
+                <Check className="h-4 w-4 text-green-500" />
+                Recommended Settings
+              </p>
+              <div className="grid grid-cols-3 gap-3 text-center">
+                <div>
+                  <p className="text-xs text-muted-foreground">Gain</p>
+                  <p className="text-lg font-mono">{tuneResult.recommendations.gain}x</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Breathing</p>
+                  <p className="text-lg font-mono">{tuneResult.recommendations.breathing_threshold.toFixed(4)}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Silence</p>
+                  <p className="text-lg font-mono">{tuneResult.recommendations.silence_threshold.toFixed(4)}</p>
+                </div>
+              </div>
+              <Button onClick={handleApplyRecommendations} className="w-full">
+                Apply Recommendations
+              </Button>
+            </div>
+          )}
+
+          {tuneResult && !tuneResult.success && (
+            <div className="mb-4 p-3 bg-destructive/10 text-destructive text-sm rounded-lg">
+              Auto-tune failed: {tuneResult.error ?? "Unknown error"}
+            </div>
+          )}
+
+          <Button
+            onClick={handleAutoTune}
+            disabled={tuning}
+            variant="outline"
+            className="w-full"
+          >
+            {tuning ? (
+              <>
+                <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                Tuning...
+              </>
+            ) : (
+              <>
+                <Wand2 className="h-4 w-4 mr-2" />
+                Start Auto-Tune
+              </>
+            )}
+          </Button>
+        </CardContent>
+      </Card>
+
       {/* Save Button */}
       <div className="flex justify-end gap-3">
         <Button
@@ -454,6 +683,12 @@ export default function AudioSettingsPage() {
               setFreqMin(audioSettings.breathing_freq_min_hz);
               setFreqMax(audioSettings.breathing_freq_max_hz);
               setDirty(false);
+              // Revert runtime to saved values
+              previewSettings(
+                audioSettings.gain,
+                audioSettings.breathing_threshold,
+                audioSettings.silence_threshold,
+              );
             }
           }}
         >
@@ -463,16 +698,16 @@ export default function AudioSettingsPage() {
           {saving ? (
             <>
               <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-              Applying...
+              Saving...
             </>
           ) : (
-            "Save & Apply"
+            "Save"
           )}
         </Button>
       </div>
 
       <p className="text-xs text-muted-foreground text-center">
-        Changes are applied immediately to the audio detector
+        Slider changes preview instantly — Save persists to config
       </p>
     </div>
   );

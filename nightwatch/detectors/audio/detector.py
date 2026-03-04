@@ -294,6 +294,110 @@ class AudioDetector(BaseDetector):
             logger.warning("Noise sampling failed — no samples collected")
         return ok
 
+    def set_preview_settings(
+        self,
+        gain: float | None = None,
+        breathing_threshold: float | None = None,
+        silence_threshold: float | None = None,
+    ) -> dict[str, float]:
+        """Mutate runtime config values for live preview.
+
+        These take effect on the next audio chunk (~100ms). Gain is applied
+        in _read_loop, thresholds are runtime comparisons in process().
+
+        Returns the current values after mutation.
+        """
+        if gain is not None:
+            self._config.gain = gain
+        if breathing_threshold is not None:
+            self._processor._config.breathing_threshold = breathing_threshold
+        if silence_threshold is not None:
+            self._processor._config.silence_threshold = silence_threshold
+        return {
+            "gain": self._config.gain,
+            "breathing_threshold": self._processor._config.breathing_threshold,
+            "silence_threshold": self._processor._config.silence_threshold,
+        }
+
+    async def auto_tune(self) -> dict[str, Any]:
+        """Auto-calibrate noise reduction and detection thresholds.
+
+        Runs ~22s in three phases while the main audio loop keeps running:
+        1. (5s) Sample noise — builds spectral profile
+        2. (15s) Collect stats — samples energy levels & breathing amplitudes
+        3. (instant) Recommend — calculates optimal thresholds
+
+        Returns dict with success, recommendations, statistics, noise_profile.
+        """
+        if self._stream is None:
+            return {"success": False, "error": "Audio stream not connected"}
+
+        # Phase 1: Sample noise (reuses existing method)
+        logger.info("Auto-tune phase 1: sampling noise (5s)")
+        noise_ok = await self.sample_noise(duration=5.0)
+
+        # Phase 2: Collect stats over 15s
+        logger.info("Auto-tune phase 2: collecting stats (15s)")
+        energy_samples: list[float] = []
+        breathing_amplitudes: list[float] = []
+        peak_levels: list[float] = []
+        sample_count = 150  # 15s at 100ms intervals
+
+        for _ in range(sample_count):
+            await asyncio.sleep(0.1)
+            analysis = self._last_analysis
+            if analysis is not None:
+                energy_samples.append(analysis.energy_level)
+                breathing_amplitudes.append(analysis.breathing_amplitude)
+                peak_levels.append(analysis.energy_level)
+
+        if not energy_samples:
+            return {"success": False, "error": "No analysis data collected"}
+
+        # Phase 3: Calculate recommendations
+        logger.info("Auto-tune phase 3: calculating recommendations")
+        energy_arr = np.array(energy_samples)
+        breathing_arr = np.array(breathing_amplitudes)
+        peak_arr = np.array(peak_levels)
+
+        noise_floor_10th = float(np.percentile(energy_arr, 10))
+        breathing_75th = float(np.percentile(breathing_arr, 75))
+        peak_95th = float(np.percentile(peak_arr, 95))
+
+        rec_silence = noise_floor_10th * 2
+        rec_breathing = breathing_75th * 0.4
+        # Scale gain so 95th percentile peak reaches ~0.3
+        rec_gain = (0.3 / peak_95th) if peak_95th > 0 else self._config.gain
+
+        # Clamp to sensible ranges
+        rec_silence = max(0.0001, min(0.02, rec_silence))
+        rec_breathing = max(0.0005, min(0.05, rec_breathing))
+        rec_gain = max(1.0, min(100.0, round(rec_gain, 1)))
+
+        statistics = {
+            "samples": len(energy_samples),
+            "energy_mean": round(float(np.mean(energy_arr)), 6),
+            "energy_p10": round(noise_floor_10th, 6),
+            "energy_p90": round(float(np.percentile(energy_arr, 90)), 6),
+            "breathing_mean": round(float(np.mean(breathing_arr)), 4),
+            "breathing_p75": round(breathing_75th, 4),
+            "peak_p95": round(peak_95th, 4),
+        }
+
+        recommendations = {
+            "gain": rec_gain,
+            "silence_threshold": round(rec_silence, 6),
+            "breathing_threshold": round(rec_breathing, 6),
+        }
+
+        logger.info("Auto-tune complete: %s", recommendations)
+        return {
+            "success": True,
+            "recommendations": recommendations,
+            "statistics": statistics,
+            "noise_profile_updated": noise_ok,
+        }
+
     def set_noise_enabled(self, enabled: bool) -> None:
         """Enable or disable noise reduction without clearing the profile."""
         self._processor.noise_reducer.enabled = enabled

@@ -196,6 +196,10 @@ class DashboardServer:
         self._app.post("/api/audio/apply-settings")(self._apply_audio_settings)
         self._app.get("/api/audio/settings")(self._get_audio_settings)
 
+        # Audio live preview & auto-tune
+        self._app.post("/api/audio/preview-settings")(self._preview_audio_settings)
+        self._app.post("/api/audio/auto-tune")(self._auto_tune_audio)
+
         # Audio noise reduction
         self._app.post("/api/audio/sample-noise")(self._sample_noise)
         self._app.post("/api/audio/clear-noise")(self._clear_noise)
@@ -1311,10 +1315,45 @@ class DashboardServer:
         audio_detector.set_noise_enabled(enabled)
         return {"success": True, "enabled": enabled}
 
+    async def _preview_audio_settings(self, request: Request) -> dict[str, Any]:
+        """Apply audio settings to runtime without restart (live preview)."""
+        audio_detector = self._detectors.get("audio")
+        if audio_detector is None or not hasattr(audio_detector, "set_preview_settings"):
+            raise HTTPException(status_code=400, detail="Audio detector not available")
+
+        body = await request.json()
+        result = audio_detector.set_preview_settings(
+            gain=body.get("gain"),
+            breathing_threshold=body.get("breathing_threshold"),
+            silence_threshold=body.get("silence_threshold"),
+        )
+        return {"success": True, "current": result}
+
+    async def _auto_tune_audio(self, request: Request) -> dict[str, Any]:
+        """Run auto-tune calibration on the audio detector (~22s)."""
+        audio_detector = self._detectors.get("audio")
+        if audio_detector is None or not hasattr(audio_detector, "auto_tune"):
+            raise HTTPException(status_code=400, detail="Audio detector not available")
+
+        result = await audio_detector.auto_tune()
+        return result
+
     async def _apply_audio_settings(self, request: Request) -> dict[str, Any]:
-        """Apply audio settings from Convex to config file and restart detector."""
+        """Apply audio settings from Convex to config file.
+
+        If request body contains {restart: false}, skips systemctl restart
+        (for use with live preview where settings are already applied in memory).
+        """
         import yaml
         import subprocess
+
+        # Check if caller wants to skip restart
+        body = {}
+        try:
+            body = await request.json()
+        except Exception:
+            pass
+        skip_restart = body.get("restart") is False
 
         # Fetch settings from Convex
         try:
@@ -1359,15 +1398,16 @@ class DashboardServer:
         # Write config
         config_file.write_text(yaml.dump(config, default_flow_style=False))
 
-        # Restart the nightwatch service to apply changes
-        try:
-            subprocess.run(
-                ["sudo", "systemctl", "restart", "nightwatch"],
-                check=True,
-                timeout=30,
-            )
-        except subprocess.SubprocessError as e:
-            raise HTTPException(status_code=500, detail=f"Failed to restart service: {e}")
+        if not skip_restart:
+            # Restart the nightwatch service to apply changes
+            try:
+                subprocess.run(
+                    ["sudo", "systemctl", "restart", "nightwatch"],
+                    check=True,
+                    timeout=30,
+                )
+            except subprocess.SubprocessError as e:
+                raise HTTPException(status_code=500, detail=f"Failed to restart service: {e}")
 
         # Clear pending flag in Convex
         try:
