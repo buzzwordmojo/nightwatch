@@ -183,16 +183,16 @@ class AudioDetector(BaseDetector):
                     timeout=1.0,
                 )
 
-                # Apply software gain (amplify quiet signals)
-                if self._config.gain != 1.0:
-                    audio = np.clip(audio * self._config.gain, -1.0, 1.0)
-
-                # Feed noise reducer if sampling
+                # Feed noise reducer if sampling (before gain, on raw signal)
                 if self._processor.noise_reducer.is_sampling:
                     self._processor.noise_reducer.add_sample(audio)
 
-                # Apply noise reduction so detectors and listeners see clean audio
+                # Apply noise reduction first (on raw signal)
                 audio = self._processor.noise_reducer.reduce(audio)
+
+                # Apply software gain after noise reduction (amplify clean signal)
+                if self._config.gain != 1.0:
+                    audio = np.clip(audio * self._config.gain, -1.0, 1.0)
 
                 # Fan out to live audio listeners (post noise reduction)
                 for listener in list(self._audio_listeners):
