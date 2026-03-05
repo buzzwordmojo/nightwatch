@@ -761,9 +761,13 @@ class NoiseReducer:
 
         # Wiener gain parameters
         self._alpha = 1.5        # oversubtraction factor
-        self._gain_floor = 0.1   # minimum gain per bin (-20 dB)
-        self._smooth_bins = 5    # frequency smoothing kernel width
+        self._gain_floor = 0.08  # minimum gain per bin (~-22 dB)
+        self._smooth_bins = 9    # frequency smoothing kernel width
         self._smooth_kernel = np.ones(self._smooth_bins) / self._smooth_bins
+
+        # Temporal gain smoothing (exponential moving average across frames)
+        self._prev_gain: np.ndarray | None = None
+        self._gain_smooth = 0.6  # smoothing factor (0=no memory, 1=frozen)
 
     @property
     def has_profile(self) -> bool:
@@ -861,8 +865,13 @@ class NoiseReducer:
 
         # Wiener gain: smooth curve, no binary thresholds
         gain = np.maximum(1.0 - self._alpha * noise / safe_power, self._gain_floor)
+        # Frequency smoothing
         gain = np.convolve(gain, self._smooth_kernel, mode='same')
         gain = np.clip(gain, self._gain_floor, 1.0)
+        # Temporal smoothing: EMA across frames to prevent rapid gain changes
+        if self._prev_gain is not None and len(self._prev_gain) == len(gain):
+            gain = self._gain_smooth * self._prev_gain + (1 - self._gain_smooth) * gain
+        self._prev_gain = gain.copy()
 
         full_gain = np.ones(len(spectrum), dtype=np.float64)
         full_gain[:n_bins] = gain
@@ -885,6 +894,7 @@ class NoiseReducer:
             try:
                 self._noise_profile = np.load(str(path))
                 self._prev_tail = np.zeros(self._hop_size, dtype=np.float32)
+                self._prev_gain = None
                 logger.info("Noise profile loaded from %s (re-sample recommended for best results)", path)
                 return True
             except Exception as e:
@@ -997,6 +1007,7 @@ class NoiseReducer:
         self._sample_chunks = []
         self._sampling = False
         self._prev_tail = np.zeros(self._hop_size, dtype=np.float32)
+        self._prev_gain = None
 
 
 class AudioProcessor:
