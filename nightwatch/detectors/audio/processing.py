@@ -761,7 +761,7 @@ class NoiseReducer:
 
         # Wiener gain parameters
         self._alpha = 1.5        # oversubtraction factor
-        self._gain_floor = 0.08  # minimum gain per bin (~-22 dB)
+        self._gain_floor = 0.08  # default minimum gain per bin (~-22 dB)
         self._smooth_bins = 9    # frequency smoothing kernel width
         self._smooth_kernel = np.ones(self._smooth_bins) / self._smooth_bins
 
@@ -784,6 +784,18 @@ class NoiseReducer:
     @property
     def is_sampling(self) -> bool:
         return self._sampling
+
+    def set_output_gain(self, gain: float) -> None:
+        """Adapt noise floor based on downstream amplification.
+
+        Higher gain needs a lower floor to suppress residual noise
+        that would otherwise be amplified into audible artifacts.
+        """
+        if gain <= 1.0:
+            self._gain_floor = 0.08
+        else:
+            # Scale floor inversely with gain: 50x gain → floor ~0.002
+            self._gain_floor = max(0.08 / gain, 0.001)
 
     def start_sampling(self) -> None:
         """Begin collecting background noise samples."""

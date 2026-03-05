@@ -188,6 +188,7 @@ class AudioDetector(BaseDetector):
                     self._processor.noise_reducer.add_sample(audio)
 
                 # Apply noise reduction first (on raw signal)
+                self._processor.noise_reducer.set_output_gain(self._config.gain)
                 audio = self._processor.noise_reducer.reduce(audio)
 
                 # Apply software gain after noise reduction (amplify clean signal)
