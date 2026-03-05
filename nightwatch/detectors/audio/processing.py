@@ -18,6 +18,7 @@ from pathlib import Path
 
 import numpy as np
 from scipy import signal as scipy_signal
+from scipy.special import exp1
 
 logger = logging.getLogger(__name__)
 
@@ -739,11 +740,11 @@ class SeizureSoundDetector:
 
 class NoiseReducer:
     """
-    Wiener-gain noise reducer with overlap-add.
+    Log-MMSE noise reducer with overlap-add.
 
-    Records background noise spectrum, then applies Wiener-style gain
-    with frequency smoothing and 50% overlap-add (Hann window) to remove
-    steady-state noise without introducing musical noise artifacts.
+    Uses the Ephraim-Malah log-MMSE estimator with decision-directed
+    a priori SNR estimation. 50% overlap-add with Hann windowing.
+    Produces smooth gains without musical noise artifacts.
     """
 
     def __init__(self, sample_rate: int = 16000, frame_size: int = 1024):
@@ -759,15 +760,10 @@ class NoiseReducer:
         self._window = np.hanning(frame_size).astype(np.float32)
         self._prev_tail = np.zeros(self._hop_size, dtype=np.float32)
 
-        # Wiener gain parameters
-        self._alpha = 1.5        # oversubtraction factor
+        # Log-MMSE parameters
+        self._dd_alpha = 0.98    # decision-directed smoothing (high = less musical noise)
         self._gain_floor = 0.08  # default minimum gain per bin (~-22 dB)
-        self._smooth_bins = 9    # frequency smoothing kernel width
-        self._smooth_kernel = np.ones(self._smooth_bins) / self._smooth_bins
-
-        # Temporal gain smoothing (exponential moving average across frames)
-        self._prev_gain: np.ndarray | None = None
-        self._gain_smooth = 0.6  # smoothing factor (0=no memory, 1=frozen)
+        self._prev_clean_power: np.ndarray | None = None  # for decision-directed estimate
 
     @property
     def has_profile(self) -> bool:
@@ -836,7 +832,7 @@ class NoiseReducer:
         return True
 
     def reduce(self, audio: np.ndarray) -> np.ndarray:
-        """Apply Wiener-gain noise reduction with overlap-add.
+        """Apply Log-MMSE noise reduction with overlap-add.
 
         If no profile is loaded or reduction is disabled, returns audio unchanged.
         """
@@ -862,7 +858,7 @@ class NoiseReducer:
         return result
 
     def _process_frame(self, frame: np.ndarray) -> np.ndarray:
-        """Process a single frame with Wiener gain."""
+        """Process a single frame with Log-MMSE (Ephraim-Malah) estimator."""
         n = self._frame_size
         if len(frame) != n:
             frame = np.pad(frame, (0, max(0, n - len(frame))))[:n]
@@ -873,22 +869,33 @@ class NoiseReducer:
 
         n_bins = min(len(power), len(self._noise_profile))
         noise = self._noise_profile[:n_bins]
-        safe_power = np.maximum(power[:n_bins], 1e-10)
+        safe_noise = np.maximum(noise, 1e-10)
 
-        # Wiener gain: smooth curve, no binary thresholds
-        gain = np.maximum(1.0 - self._alpha * noise / safe_power, self._gain_floor)
-        # Frequency smoothing
-        gain = np.convolve(gain, self._smooth_kernel, mode='same')
-        gain = np.clip(gain, self._gain_floor, 1.0)
-        # Temporal smoothing: EMA across frames to prevent rapid gain changes
-        if self._prev_gain is not None and len(self._prev_gain) == len(gain):
-            gain = self._gain_smooth * self._prev_gain + (1 - self._gain_smooth) * gain
-        self._prev_gain = gain.copy()
+        # A posteriori SNR: gamma = |Y|^2 / noise
+        gamma = power[:n_bins] / safe_noise
+
+        # A priori SNR via decision-directed approach
+        if self._prev_clean_power is not None and len(self._prev_clean_power) == n_bins:
+            xi = (self._dd_alpha * self._prev_clean_power / safe_noise
+                  + (1 - self._dd_alpha) * np.maximum(gamma - 1, 0))
+        else:
+            xi = np.maximum(gamma - 1, 0)
+        xi = np.maximum(xi, 1e-10)
+
+        # Log-MMSE gain: G = (xi/(1+xi)) * exp(0.5 * E1(v))
+        v = xi * gamma / (1 + xi)
+        v = np.maximum(v, 1e-10)
+        gain = (xi / (1 + xi)) * np.exp(0.5 * exp1(v))
+        gain = np.clip(gain, self._gain_floor, 1.0).astype(np.float64)
 
         full_gain = np.ones(len(spectrum), dtype=np.float64)
         full_gain[:n_bins] = gain
 
         clean = spectrum * full_gain
+
+        # Store clean power for next frame's decision-directed estimate
+        self._prev_clean_power = np.abs(clean[:n_bins]) ** 2
+
         result = np.fft.irfft(clean, n=n).astype(np.float32)
         result *= self._window  # synthesis window
         return result
@@ -906,7 +913,7 @@ class NoiseReducer:
             try:
                 self._noise_profile = np.load(str(path))
                 self._prev_tail = np.zeros(self._hop_size, dtype=np.float32)
-                self._prev_gain = None
+                self._prev_clean_power = None
                 logger.info("Noise profile loaded from %s (re-sample recommended for best results)", path)
                 return True
             except Exception as e:
@@ -1019,7 +1026,7 @@ class NoiseReducer:
         self._sample_chunks = []
         self._sampling = False
         self._prev_tail = np.zeros(self._hop_size, dtype=np.float32)
-        self._prev_gain = None
+        self._prev_clean_power = None
 
 
 class AudioProcessor:
