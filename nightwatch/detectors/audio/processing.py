@@ -756,12 +756,16 @@ class NoiseReducer:
         self._enabled = True
 
         # STFT overlap-add
-        # FFT frame = half the chunk size, hop = half the FFT frame (75% fewer samples per FFT)
+        # FFT frame = half the chunk size, hop = half the FFT frame
         self._fft_size = frame_size // 2  # 800 for 1600-sample chunks
         self._hop_size = self._fft_size // 2  # 400
-        self._window = np.hanning(self._fft_size).astype(np.float32)
+        # Periodic Hann window: COLA-compliant at 50% overlap (sums to exactly 1.0)
+        n = self._fft_size
+        self._window = (0.5 * (1 - np.cos(2 * np.pi * np.arange(n) / n))).astype(np.float32)
         # Previous chunk's last fft_size samples for cross-boundary overlap
         self._prev_samples = np.zeros(self._fft_size, dtype=np.float32)
+        # Output carry: overlap-add tail from previous reduce() call
+        self._out_carry = np.zeros(self._fft_size, dtype=np.float32)
 
         # Log-MMSE parameters
         self._dd_alpha = 0.98    # decision-directed smoothing (high = less musical noise)
@@ -845,29 +849,40 @@ class NoiseReducer:
 
         Prepends previous chunk's tail for cross-boundary overlap, then
         processes multiple short FFT frames with 50% overlap across the
-        combined buffer. Returns exactly len(audio) output samples.
+        combined buffer. An output carry buffer ensures overlap-add
+        continuity across consecutive reduce() calls.
         """
         if self._noise_profile is None or not self._enabled:
             return audio
 
         fft_n = self._fft_size
         hop = self._hop_size
+        audio_len = len(audio)
 
         # Prepend previous chunk's tail for seamless cross-boundary overlap
         buf = np.concatenate([self._prev_samples, audio])
-        self._prev_samples = audio[-fft_n:].copy() if len(audio) >= fft_n else \
-            np.concatenate([self._prev_samples[len(audio):], audio])
+        self._prev_samples = audio[-fft_n:].copy() if audio_len >= fft_n else \
+            np.concatenate([self._prev_samples[audio_len:], audio])
 
-        # Overlap-add across the full buffer
-        out = np.zeros(len(buf), dtype=np.float32)
+        # Overlap-add across the full buffer (with extra room for tail)
+        out = np.zeros(len(buf) + fft_n, dtype=np.float32)
         pos = 0
         while pos + fft_n <= len(buf):
             out[pos:pos + fft_n] += self._process_frame(buf[pos:pos + fft_n])
             pos += hop
 
-        # Return only the portion corresponding to the current chunk
-        # (skip the prepended prev_samples region)
-        return out[fft_n:fft_n + len(audio)]
+        # Add output carry from previous call
+        carry_len = min(len(self._out_carry), len(out))
+        out[:carry_len] += self._out_carry[:carry_len]
+
+        # Extract result for current audio (skip prepended region)
+        result = out[fft_n:fft_n + audio_len]
+
+        # Save output carry: everything after the result region
+        tail_start = fft_n + audio_len
+        self._out_carry = out[tail_start:tail_start + fft_n].copy()
+
+        return result
 
     def _process_frame(self, frame: np.ndarray) -> np.ndarray:
         """Process a single frame with Log-MMSE (Ephraim-Malah) estimator."""
@@ -912,7 +927,7 @@ class NoiseReducer:
         self._prev_clean_power = np.abs(clean[:n_bins]) ** 2
 
         result = np.fft.irfft(clean, n=n).astype(np.float32)
-        result *= self._window  # synthesis window
+        # No synthesis window — periodic Hann at 50% overlap sums to 1.0 (COLA)
         return result
 
     def save(self, path: Path) -> None:
@@ -928,6 +943,7 @@ class NoiseReducer:
             try:
                 self._noise_profile = np.load(str(path))
                 self._prev_samples = np.zeros(self._fft_size, dtype=np.float32)
+                self._out_carry = np.zeros(self._fft_size, dtype=np.float32)
                 self._prev_clean_power = None
                 logger.info("Noise profile loaded from %s (re-sample recommended for best results)", path)
                 return True
@@ -1041,6 +1057,7 @@ class NoiseReducer:
         self._sample_chunks = []
         self._sampling = False
         self._prev_samples = np.zeros(self._fft_size, dtype=np.float32)
+        self._out_carry = np.zeros(self._fft_size, dtype=np.float32)
         self._prev_clean_power = None
 
 

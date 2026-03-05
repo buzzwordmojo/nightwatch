@@ -128,9 +128,11 @@ class AudioDetector(BaseDetector):
         # Create audio callback
         def audio_callback(indata, frames, time_info, status):
             if status:
-                pass  # Ignore buffer warnings for now
-            # Copy to avoid buffer reuse issues
-            self._audio_buffer.put_nowait(indata.copy().flatten())
+                logger.warning("Audio callback status: %s", status)
+            try:
+                self._audio_buffer.put_nowait(indata.copy().flatten())
+            except asyncio.QueueFull:
+                logger.warning("Audio buffer overflow — dropping chunk")
 
         # Load saved noise profile if it exists
         if self._noise_profile_path.exists():
@@ -183,17 +185,23 @@ class AudioDetector(BaseDetector):
                     timeout=1.0,
                 )
 
+                # De-click: replace impulse spikes with local median
+                if not getattr(self, '_bypass_declick', False):
+                    audio = self._declick(audio)
+
                 # Feed noise reducer if sampling (before gain, on raw signal)
                 if self._processor.noise_reducer.is_sampling:
                     self._processor.noise_reducer.add_sample(audio)
 
-                # Apply noise reduction first (on raw signal)
-                self._processor.noise_reducer.set_output_gain(self._config.gain)
-                audio = self._processor.noise_reducer.reduce(audio)
+                # Apply noise reduction (skipped if bypass_nr is set)
+                if not getattr(self, '_bypass_nr', False):
+                    self._processor.noise_reducer.set_output_gain(self._config.gain)
+                    audio = self._processor.noise_reducer.reduce(audio)
 
-                # Apply software gain after noise reduction (amplify clean signal)
-                if self._config.gain != 1.0:
-                    audio = np.clip(audio * self._config.gain, -1.0, 1.0)
+                # Apply software gain (skipped if bypass_gain is set)
+                if not getattr(self, '_bypass_gain', False):
+                    if self._config.gain != 1.0:
+                        audio = np.clip(audio * self._config.gain, -1.0, 1.0)
 
                 # Fan out to live audio listeners (post noise reduction)
                 for listener in list(self._audio_listeners):
@@ -274,6 +282,17 @@ class AudioDetector(BaseDetector):
             },
         )
 
+    @staticmethod
+    def _declick(audio: np.ndarray) -> np.ndarray:
+        """Remove impulse noise with a 3-sample median filter.
+
+        Replaces each sample with the median of itself and its two
+        neighbors. Eliminates single-sample spikes while preserving
+        the overall signal shape. Cost: ~0.1ms for 1600 samples.
+        """
+        from scipy.signal import medfilt
+        return medfilt(audio, kernel_size=3).astype(audio.dtype)
+
     async def sample_noise(self, duration: float = 5.0) -> bool:
         """Sample background noise and build a spectral subtraction profile.
 
@@ -300,11 +319,18 @@ class AudioDetector(BaseDetector):
         gain: float | None = None,
         breathing_threshold: float | None = None,
         silence_threshold: float | None = None,
-    ) -> dict[str, float]:
+        bypass_nr: bool | None = None,
+        bypass_gain: bool | None = None,
+        bypass_declick: bool | None = None,
+    ) -> dict[str, Any]:
         """Mutate runtime config values for live preview.
 
         These take effect on the next audio chunk (~100ms). Gain is applied
         in _read_loop, thresholds are runtime comparisons in process().
+
+        bypass_nr: skip noise reduction (hear raw mic input)
+        bypass_gain: skip software gain amplification
+        bypass_declick: skip impulse de-click filter
 
         Returns the current values after mutation.
         """
@@ -314,10 +340,22 @@ class AudioDetector(BaseDetector):
             self._processor._config.breathing_threshold = breathing_threshold
         if silence_threshold is not None:
             self._processor._config.silence_threshold = silence_threshold
+        if bypass_nr is not None:
+            self._bypass_nr = bypass_nr
+            logger.info("Noise reduction bypass: %s", bypass_nr)
+        if bypass_gain is not None:
+            self._bypass_gain = bypass_gain
+            logger.info("Gain bypass: %s", bypass_gain)
+        if bypass_declick is not None:
+            self._bypass_declick = bypass_declick
+            logger.info("De-click bypass: %s", bypass_declick)
         return {
             "gain": self._config.gain,
             "breathing_threshold": self._processor._config.breathing_threshold,
             "silence_threshold": self._processor._config.silence_threshold,
+            "bypass_nr": getattr(self, '_bypass_nr', False),
+            "bypass_gain": getattr(self, '_bypass_gain', False),
+            "bypass_declick": getattr(self, '_bypass_declick', False),
         }
 
     async def auto_tune(self) -> dict[str, Any]:

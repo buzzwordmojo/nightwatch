@@ -1326,6 +1326,9 @@ class DashboardServer:
             gain=body.get("gain"),
             breathing_threshold=body.get("breathing_threshold"),
             silence_threshold=body.get("silence_threshold"),
+            bypass_nr=body.get("bypass_nr"),
+            bypass_gain=body.get("bypass_gain"),
+            bypass_declick=body.get("bypass_declick"),
         )
         return {"success": True, "current": result}
 
