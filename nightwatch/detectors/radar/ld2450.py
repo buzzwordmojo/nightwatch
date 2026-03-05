@@ -114,16 +114,18 @@ class LD2450Frame:
             offset = 4 + (i * 8)
             target_data = frame_data[offset : offset + 8]
 
-            # Unpack little-endian: 2x signed int16, 1x signed int16, 1x uint16
-            x, y, speed, resolution = struct.unpack("<hhhH", target_data)
+            # Unpack little-endian as unsigned for sign-magnitude decoding, plus uint16
+            x, y, speed, resolution = struct.unpack("<HHHH", target_data)
 
-            # The sensor uses a sign bit in the high bit for X and Y
-            # X: bit 15 = sign (0=positive, 1=negative), bits 0-14 = magnitude
-            # Y: same format
+            # LD2450 uses sign-magnitude encoding (bit 15 = sign, bits 0-14 = value)
             if x & 0x8000:
                 x = -(x & 0x7FFF)
-            if y & 0x8000:
-                y = -(y & 0x7FFF)
+            # Y is depth (forward from sensor) — always positive in practice,
+            # just extract the magnitude regardless of bit 15
+            y = y & 0x7FFF
+            # Speed: sign-magnitude (positive = approaching)
+            if speed & 0x8000:
+                speed = -(speed & 0x7FFF)
 
             target = LD2450Target(x=x, y=y, speed=speed, resolution=resolution)
             if target.is_valid:
