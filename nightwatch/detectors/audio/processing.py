@@ -739,19 +739,31 @@ class SeizureSoundDetector:
 
 class NoiseReducer:
     """
-    Spectral subtraction noise reducer.
+    Wiener-gain noise reducer with overlap-add.
 
-    Records background noise spectrum, then subtracts it from live audio
-    to remove steady-state noise (fans, hum, electrical static) while
-    preserving transient sounds (breathing).
+    Records background noise spectrum, then applies Wiener-style gain
+    with frequency smoothing and 50% overlap-add (Hann window) to remove
+    steady-state noise without introducing musical noise artifacts.
     """
 
-    def __init__(self, sample_rate: int = 16000):
+    def __init__(self, sample_rate: int = 16000, frame_size: int = 1024):
         self._sample_rate = sample_rate
+        self._frame_size = frame_size
         self._noise_profile: np.ndarray | None = None
         self._sampling = False
         self._sample_chunks: list[np.ndarray] = []
         self._enabled = True
+
+        # Overlap-add state
+        self._hop_size = frame_size // 2
+        self._window = np.hanning(frame_size).astype(np.float32)
+        self._prev_tail = np.zeros(self._hop_size, dtype=np.float32)
+
+        # Wiener gain parameters
+        self._alpha = 1.5        # oversubtraction factor
+        self._gain_floor = 0.1   # minimum gain per bin (-20 dB)
+        self._smooth_bins = 5    # frequency smoothing kernel width
+        self._smooth_kernel = np.ones(self._smooth_bins) / self._smooth_bins
 
     @property
     def has_profile(self) -> bool:
@@ -791,7 +803,11 @@ class NoiseReducer:
         # Compute power spectrum for each chunk and take the median
         spectra = []
         for chunk in self._sample_chunks:
-            spectrum = np.abs(np.fft.rfft(chunk)) ** 2
+            padded = chunk[:self._frame_size]
+            if len(padded) < self._frame_size:
+                padded = np.pad(padded, (0, self._frame_size - len(padded)))
+            windowed = padded * self._window
+            spectrum = np.abs(np.fft.rfft(windowed)) ** 2
             spectra.append(spectrum)
 
         # Align lengths (chunks may differ slightly)
@@ -804,36 +820,57 @@ class NoiseReducer:
         return True
 
     def reduce(self, audio: np.ndarray) -> np.ndarray:
-        """Apply spectral subtraction to remove background noise.
+        """Apply Wiener-gain noise reduction with overlap-add.
 
         If no profile is loaded or reduction is disabled, returns audio unchanged.
         """
         if self._noise_profile is None or not self._enabled:
             return audio
 
-        # FFT
-        spectrum = np.fft.rfft(audio)
+        hop = self._hop_size
+        # Frame 1: prev_tail + audio[:hop]  (overlap region)
+        # Frame 2: audio[:frame_size]
+        frame1 = np.concatenate([self._prev_tail, audio[:hop]])
+        frame2_end = min(self._frame_size, len(audio))
+        frame2 = audio[:frame2_end]
+        self._prev_tail = audio[-hop:].copy()
+
+        out1 = self._process_frame(frame1)
+        out2 = self._process_frame(frame2)
+
+        # Overlap-add (Hann windows sum to 1.0 in overlap region)
+        result = np.zeros(len(audio), dtype=np.float32)
+        result[:hop] = out1[hop:] + out2[:hop]
+        if len(audio) > hop:
+            result[hop:] = out2[hop:len(audio)]
+        return result
+
+    def _process_frame(self, frame: np.ndarray) -> np.ndarray:
+        """Process a single frame with Wiener gain."""
+        n = self._frame_size
+        if len(frame) != n:
+            frame = np.pad(frame, (0, max(0, n - len(frame))))[:n]
+
+        windowed = frame * self._window
+        spectrum = np.fft.rfft(windowed)
         power = np.abs(spectrum) ** 2
-        phase = np.angle(spectrum)
 
-        # Match lengths (in case chunk size differs from profile)
-        n = min(len(power), len(self._noise_profile))
-        noise = self._noise_profile[:n]
+        n_bins = min(len(power), len(self._noise_profile))
+        noise = self._noise_profile[:n_bins]
+        safe_power = np.maximum(power[:n_bins], 1e-10)
 
-        # Subtract noise power with spectral floor (avoid negative power)
-        clean_power = np.maximum(power[:n] - noise, power[:n] * 0.01)
+        # Wiener gain: smooth curve, no binary thresholds
+        gain = np.maximum(1.0 - self._alpha * noise / safe_power, self._gain_floor)
+        gain = np.convolve(gain, self._smooth_kernel, mode='same')
+        gain = np.clip(gain, self._gain_floor, 1.0)
 
-        # Reconstruct with original phase
-        clean_mag = np.sqrt(clean_power)
-        if len(spectrum) > n:
-            # Keep remaining bins unchanged
-            full_mag = np.abs(spectrum).copy()
-            full_mag[:n] = clean_mag
-            clean_spectrum = full_mag * np.exp(1j * phase)
-        else:
-            clean_spectrum = clean_mag * np.exp(1j * phase[:n])
+        full_gain = np.ones(len(spectrum), dtype=np.float64)
+        full_gain[:n_bins] = gain
 
-        return np.fft.irfft(clean_spectrum, n=len(audio)).astype(audio.dtype)
+        clean = spectrum * full_gain
+        result = np.fft.irfft(clean, n=n).astype(np.float32)
+        result *= self._window  # synthesis window
+        return result
 
     def save(self, path: Path) -> None:
         """Save noise profile to disk."""
@@ -847,7 +884,8 @@ class NoiseReducer:
         if path.exists():
             try:
                 self._noise_profile = np.load(str(path))
-                logger.info("Noise profile loaded from %s", path)
+                self._prev_tail = np.zeros(self._hop_size, dtype=np.float32)
+                logger.info("Noise profile loaded from %s (re-sample recommended for best results)", path)
                 return True
             except Exception as e:
                 logger.warning("Failed to load noise profile: %s", e)
@@ -958,6 +996,7 @@ class NoiseReducer:
         self._noise_profile = None
         self._sample_chunks = []
         self._sampling = False
+        self._prev_tail = np.zeros(self._hop_size, dtype=np.float32)
 
 
 class AudioProcessor:
@@ -981,7 +1020,10 @@ class AudioProcessor:
         self._silence = SilenceDetector(self._config)
         self._vocalization = VocalizationDetector(self._config)
         self._seizure = SeizureSoundDetector(self._config)
-        self._noise_reducer = NoiseReducer(self._config.sample_rate)
+        self._noise_reducer = NoiseReducer(
+            self._config.sample_rate,
+            frame_size=int(self._config.chunk_duration * self._config.sample_rate),
+        )
 
         self._chunk_samples = int(self._config.chunk_duration * self._config.sample_rate)
 
