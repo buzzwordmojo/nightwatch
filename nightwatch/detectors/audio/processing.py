@@ -755,14 +755,19 @@ class NoiseReducer:
         self._sample_chunks: list[np.ndarray] = []
         self._enabled = True
 
-        # Overlap-add state
-        self._hop_size = frame_size // 2
-        self._window = np.hanning(frame_size).astype(np.float32)
-        self._prev_tail = np.zeros(self._hop_size, dtype=np.float32)
+        # STFT overlap-add
+        # FFT frame = half the chunk size, hop = half the FFT frame (75% fewer samples per FFT)
+        self._fft_size = frame_size // 2  # 800 for 1600-sample chunks
+        self._hop_size = self._fft_size // 2  # 400
+        self._window = np.hanning(self._fft_size).astype(np.float32)
+        # Previous chunk's last fft_size samples for cross-boundary overlap
+        self._prev_samples = np.zeros(self._fft_size, dtype=np.float32)
 
         # Log-MMSE parameters
         self._dd_alpha = 0.98    # decision-directed smoothing (high = less musical noise)
         self._gain_floor = 0.08  # default minimum gain per bin (~-22 dB)
+        self._smooth_bins = 3    # frequency smoothing kernel width
+        self._smooth_kernel = np.ones(self._smooth_bins) / self._smooth_bins
         self._prev_clean_power: np.ndarray | None = None  # for decision-directed estimate
 
     @property
@@ -813,14 +818,18 @@ class NoiseReducer:
             return False
 
         # Compute power spectrum for each chunk and take the median
+        # Use fft_size-length windows matching the processing frames
+        fft_n = self._fft_size
         spectra = []
         for chunk in self._sample_chunks:
-            padded = chunk[:self._frame_size]
-            if len(padded) < self._frame_size:
-                padded = np.pad(padded, (0, self._frame_size - len(padded)))
-            windowed = padded * self._window
-            spectrum = np.abs(np.fft.rfft(windowed)) ** 2
-            spectra.append(spectrum)
+            # Extract multiple frames per chunk for better estimate
+            for start in range(0, max(1, len(chunk) - fft_n + 1), self._hop_size):
+                seg = chunk[start:start + fft_n]
+                if len(seg) < fft_n:
+                    seg = np.pad(seg, (0, fft_n - len(seg)))
+                windowed = seg * self._window
+                spectrum = np.abs(np.fft.rfft(windowed)) ** 2
+                spectra.append(spectrum)
 
         # Align lengths (chunks may differ slightly)
         min_len = min(len(s) for s in spectra)
@@ -834,32 +843,35 @@ class NoiseReducer:
     def reduce(self, audio: np.ndarray) -> np.ndarray:
         """Apply Log-MMSE noise reduction with overlap-add.
 
-        If no profile is loaded or reduction is disabled, returns audio unchanged.
+        Prepends previous chunk's tail for cross-boundary overlap, then
+        processes multiple short FFT frames with 50% overlap across the
+        combined buffer. Returns exactly len(audio) output samples.
         """
         if self._noise_profile is None or not self._enabled:
             return audio
 
+        fft_n = self._fft_size
         hop = self._hop_size
-        # Frame 1: prev_tail + audio[:hop]  (overlap region)
-        # Frame 2: audio[:frame_size]
-        frame1 = np.concatenate([self._prev_tail, audio[:hop]])
-        frame2_end = min(self._frame_size, len(audio))
-        frame2 = audio[:frame2_end]
-        self._prev_tail = audio[-hop:].copy()
 
-        out1 = self._process_frame(frame1)
-        out2 = self._process_frame(frame2)
+        # Prepend previous chunk's tail for seamless cross-boundary overlap
+        buf = np.concatenate([self._prev_samples, audio])
+        self._prev_samples = audio[-fft_n:].copy() if len(audio) >= fft_n else \
+            np.concatenate([self._prev_samples[len(audio):], audio])
 
-        # Overlap-add (Hann windows sum to 1.0 in overlap region)
-        result = np.zeros(len(audio), dtype=np.float32)
-        result[:hop] = out1[hop:] + out2[:hop]
-        if len(audio) > hop:
-            result[hop:] = out2[hop:len(audio)]
-        return result
+        # Overlap-add across the full buffer
+        out = np.zeros(len(buf), dtype=np.float32)
+        pos = 0
+        while pos + fft_n <= len(buf):
+            out[pos:pos + fft_n] += self._process_frame(buf[pos:pos + fft_n])
+            pos += hop
+
+        # Return only the portion corresponding to the current chunk
+        # (skip the prepended prev_samples region)
+        return out[fft_n:fft_n + len(audio)]
 
     def _process_frame(self, frame: np.ndarray) -> np.ndarray:
         """Process a single frame with Log-MMSE (Ephraim-Malah) estimator."""
-        n = self._frame_size
+        n = self._fft_size
         if len(frame) != n:
             frame = np.pad(frame, (0, max(0, n - len(frame))))[:n]
 
@@ -886,6 +898,9 @@ class NoiseReducer:
         v = xi * gamma / (1 + xi)
         v = np.maximum(v, 1e-10)
         gain = (xi / (1 + xi)) * np.exp(0.5 * exp1(v))
+
+        # Frequency smoothing to avoid narrow-band artifacts
+        gain = np.convolve(gain, self._smooth_kernel, mode='same')
         gain = np.clip(gain, self._gain_floor, 1.0).astype(np.float64)
 
         full_gain = np.ones(len(spectrum), dtype=np.float64)
@@ -912,7 +927,7 @@ class NoiseReducer:
         if path.exists():
             try:
                 self._noise_profile = np.load(str(path))
-                self._prev_tail = np.zeros(self._hop_size, dtype=np.float32)
+                self._prev_samples = np.zeros(self._fft_size, dtype=np.float32)
                 self._prev_clean_power = None
                 logger.info("Noise profile loaded from %s (re-sample recommended for best results)", path)
                 return True
@@ -1025,7 +1040,7 @@ class NoiseReducer:
         self._noise_profile = None
         self._sample_chunks = []
         self._sampling = False
-        self._prev_tail = np.zeros(self._hop_size, dtype=np.float32)
+        self._prev_samples = np.zeros(self._fft_size, dtype=np.float32)
         self._prev_clean_power = None
 
 
