@@ -68,6 +68,9 @@ export const getHealth = query({
       if (comp.status === "error") {
         overall = "degraded";
       }
+      if (comp.status === "waiting") {
+        if (overall === "online") overall = "degraded";
+      }
       if (comp.status === "offline") {
         overall = "error";
       }

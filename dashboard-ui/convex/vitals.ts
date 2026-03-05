@@ -70,11 +70,13 @@ export const getRecentReadings = query({
     // By taking fewer records with larger gaps
     const maxRecords = minutes > 60 ? 500 : 1000;
 
-    return await ctx.db
+    // Query newest first so the take() limit keeps recent data, not oldest
+    const readings = await ctx.db
       .query("readings")
       .withIndex("by_timestamp", (q) => q.gte("timestamp", cutoff))
-      .order("asc")
+      .order("desc")
       .take(maxRecords);
+    return readings.reverse();
   },
 });
 

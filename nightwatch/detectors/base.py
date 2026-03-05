@@ -26,6 +26,7 @@ class DetectorStatus(str, Enum):
     CALIBRATING = "calibrating"
     ERROR = "error"
     DISCONNECTED = "disconnected"
+    WAITING = "waiting"  # Hardware not available yet, retrying
 
 
 @dataclass
@@ -86,6 +87,12 @@ class BaseDetector(ABC):
         self._sequence = 0
         self._session_id = ""
         self._running = False
+
+        # Auto-reconnect
+        self._retry_task: asyncio.Task | None = None
+        self._retry_interval = 5.0  # seconds between reconnect attempts
+        self._max_retry_interval = 60.0
+        self._retry_count = 0
 
         # Callbacks
         self._on_event: Callable[[Event], Awaitable[None]] | None = None
@@ -176,32 +183,42 @@ class BaseDetector(ABC):
     # ========================================================================
 
     async def start(self) -> None:
-        """Start the detector."""
+        """Start the detector. If hardware isn't available, retries automatically."""
         if self._running:
             return
 
         self._status = DetectorStatus.STARTING
         self._error_message = None
+        self._running = True
 
         try:
             await self._connect()
             self._connected = True
             self._start_time = time.time()
-            self._running = True
             self._status = DetectorStatus.RUNNING
+            self._retry_count = 0
 
             # Start read loop
             asyncio.create_task(self._run_read_loop())
 
         except Exception as e:
-            self._status = DetectorStatus.ERROR
+            self._status = DetectorStatus.WAITING
             self._error_message = str(e)
             self._connected = False
-            raise
+            # Don't crash — schedule retry
+            self._retry_task = asyncio.create_task(self._retry_connect())
 
     async def stop(self) -> None:
         """Stop the detector."""
         self._running = False
+
+        if self._retry_task and not self._retry_task.done():
+            self._retry_task.cancel()
+            try:
+                await self._retry_task
+            except asyncio.CancelledError:
+                pass
+            self._retry_task = None
 
         try:
             await self._disconnect()
@@ -303,12 +320,75 @@ class BaseDetector(ABC):
             await self._on_error(error)
 
     async def _run_read_loop(self) -> None:
-        """Wrapper around read loop with error handling."""
+        """Wrapper around read loop with auto-reconnect on failure."""
+        error = None
         try:
             await self._read_loop()
         except Exception as e:
-            self._status = DetectorStatus.ERROR
+            error = e
             await self._handle_error(e)
+
+        # If we're still supposed to be running, the read loop exited unexpectedly
+        if self._running:
+            reason = str(error) if error else "read loop ended"
+            print(f"  ⚠ {self._name.title()} detector lost: {reason}")
+            self._status = DetectorStatus.WAITING
+            self._connected = False
+            try:
+                await self._disconnect()
+            except Exception:
+                pass
+            # Schedule reconnect (only if one isn't already running)
+            if not self._retry_task or self._retry_task.done():
+                self._retry_task = asyncio.create_task(self._retry_connect())
+
+    async def _retry_connect(self) -> None:
+        """Retry connecting to hardware with exponential backoff."""
+        while self._running:
+            self._retry_count += 1
+            delay = min(
+                self._retry_interval * (2 ** min(self._retry_count - 1, 4)),
+                self._max_retry_interval,
+            )
+            await asyncio.sleep(delay)
+
+            if not self._running:
+                return
+
+            try:
+                await self._connect()
+                self._connected = True
+                self._start_time = time.time()
+                self._status = DetectorStatus.RUNNING
+                self._error_message = None
+                self._retry_count = 0
+                print(f"  ✓ {self._name.title()} detector reconnected")
+
+                # Run read loop inline (not as a separate task) so we
+                # stay in this retry loop if it fails again
+                error = None
+                try:
+                    await self._read_loop()
+                except Exception as e:
+                    error = e
+                    await self._handle_error(e)
+
+                # Read loop exited — if still running, loop back to retry
+                if self._running:
+                    reason = str(error) if error else "read loop ended"
+                    print(f"  ⚠ {self._name.title()} detector lost: {reason}")
+                    self._status = DetectorStatus.WAITING
+                    self._connected = False
+                    try:
+                        await self._disconnect()
+                    except Exception:
+                        pass
+                    # Fall through to retry loop
+                else:
+                    return
+
+            except Exception as e:
+                self._error_message = str(e)
 
 
 class MockDetector(BaseDetector):

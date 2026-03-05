@@ -54,6 +54,10 @@ class ConvexBridge:
         # Last known state per detector
         self._detector_states: dict[str, dict[str, Any]] = {}
 
+        # Throttle detector state updates (avoid OCC conflicts)
+        self._last_detector_update: dict[str, float] = {}
+        self._detector_update_interval = 0.5  # Max 2 updates/sec per detector
+
         # Backoff state
         self._consecutive_failures = 0
         self._backoff_until = 0.0
@@ -218,7 +222,18 @@ class ConvexBridge:
             return False
 
     async def _update_detector_state(self, event: Event) -> None:
-        """Update detector state in Convex."""
+        """Update detector state in Convex (throttled to avoid OCC conflicts)."""
+        now = time.time()
+        last = self._last_detector_update.get(event.detector, 0)
+        if now - last < self._detector_update_interval:
+            # Still cache locally for readings extraction
+            self._detector_states[event.detector] = {
+                "state": self._event_state_to_string(event.state),
+                "confidence": event.confidence,
+                "value": event.value,
+            }
+            return
+
         state_str = self._event_state_to_string(event.state)
 
         await self._mutation("vitals:updateDetector", {
@@ -228,7 +243,7 @@ class ConvexBridge:
             "value": event.value,
         })
 
-        # Cache for reference
+        self._last_detector_update[event.detector] = now
         self._detector_states[event.detector] = {
             "state": state_str,
             "confidence": event.confidence,
@@ -305,11 +320,14 @@ class ConvexBridge:
                 json={
                     "path": path,
                     "args": args,
+                    "format": "json",
                 },
             )
 
             if response.status_code != 200:
-                self._record_failure()
+                # Don't back off for OCC errors — they're transient conflicts, not outages
+                if "OptimisticConcurrencyControl" not in response.text:
+                    self._record_failure()
                 raise RuntimeError(f"Convex mutation failed: {response.text}")
 
             self._record_success()

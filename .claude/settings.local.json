@@ -27,7 +27,8 @@
       "Bash(npm run build:*)",
       "Bash(for f in .next/server/app/index.html .next/server/app/index.rsc .next/server/app/settings/audio.html .next/server/app/settings/audio.rsc)",
       "Bash(do cat \"$f\")",
-      "Bash(done)"
+      "Bash(done)",
+      "Bash(source:*)"
     ]
   }
 }

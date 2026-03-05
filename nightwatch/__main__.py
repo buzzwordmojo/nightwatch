@@ -338,6 +338,8 @@ async def run_nightwatch(
 
     for detector in detectors:
         await detector.start()
+        if detector.status.value == "waiting":
+            print(f"  ⏳ {detector.name.title()} detector waiting for hardware (will auto-connect)")
 
     # Report system status to Convex periodically
     async def update_system_status():
@@ -346,10 +348,20 @@ async def run_nightwatch(
                 await convex_bridge.update_system_status("engine", "online", "Alert engine running")
                 for detector in detectors:
                     is_mock = isinstance(detector, (MockRadarDetector, MockAudioDetector, MockBCGDetector))
+                    status = detector.status.value
+                    if detector.is_running:
+                        conv_status = "online"
+                        message = f"{'Mock ' if is_mock else ''}{detector.name.title()} detector active"
+                    elif status == "waiting":
+                        conv_status = "waiting"
+                        message = f"{detector.name.title()} waiting for hardware"
+                    else:
+                        conv_status = "offline"
+                        message = f"{detector.name.title()} detector {status}"
                     await convex_bridge.update_system_status(
                         detector.name,
-                        "online" if detector.is_running else "offline",
-                        f"{'Mock ' if is_mock else ''}{detector.name.title()} detector active",
+                        conv_status,
+                        message,
                         mock=is_mock,
                     )
             except Exception as e:

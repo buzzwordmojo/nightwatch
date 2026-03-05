@@ -386,12 +386,12 @@ class MovementDetector:
         # Calculate speed average
         avg_speed = np.mean(list(self._speed_buffer))
 
-        # Classify movement
-        is_macro = total_var > self._macro_threshold or avg_speed > 50
-        is_micro = total_var > self._micro_threshold and not is_macro
+        # Classify movement (cast to Python bool — numpy.bool_ isn't JSON-serializable)
+        is_macro = bool(total_var > self._macro_threshold or avg_speed > 50)
+        is_micro = bool(total_var > self._micro_threshold and not is_macro)
 
         # Movement level (0-1)
-        level = min(1.0, total_var / self._macro_threshold)
+        level = float(min(1.0, total_var / self._macro_threshold))
 
         return MovementAnalysis(level=level, is_macro=is_macro, is_micro=is_micro)
 
