@@ -19,6 +19,8 @@ export default defineSchema({
     breathingAmplitude: v.optional(v.float64()),
     signalQuality: v.optional(v.float64()),
     bedOccupied: v.optional(v.boolean()),
+    fusionAgreement: v.optional(v.float64()), // 0-1, how much sensors agree
+    fusionSources: v.optional(v.float64()), // Number of sensor sources
   }).index("by_timestamp", ["timestamp"]),
 
   // Alert history

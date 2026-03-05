@@ -40,6 +40,8 @@ export const insertReading = mutation({
     breathingAmplitude: v.optional(v.float64()),
     signalQuality: v.optional(v.float64()),
     bedOccupied: v.optional(v.boolean()),
+    fusionAgreement: v.optional(v.float64()),
+    fusionSources: v.optional(v.float64()),
   },
   handler: async (ctx, args) => {
     return await ctx.db.insert("readings", {
@@ -107,7 +109,7 @@ export const getCurrentVitals = query({
         updatedAt: detector.updatedAt,
       };
 
-      // Extract specific values
+      // Extract specific values from raw detectors (as fallbacks)
       if (detector.detector === "radar") {
         vitals.respirationRate = detector.value?.respiration_rate ?? null;
       }
@@ -122,9 +124,30 @@ export const getCurrentVitals = query({
         vitals.bedOccupied = detector.value?.bed_occupied ?? null;
       }
 
-      // Track worst state
-      if (stateOrder.indexOf(detector.state) > stateOrder.indexOf(worstState)) {
-        worstState = detector.state;
+      // Fusion channels override raw values
+      if (detector.detector === "fusion.respiration_rate") {
+        if (detector.value?.value != null) {
+          vitals.respirationRate = detector.value.value;
+          vitals.fusionAgreement = detector.value.agreement ?? 1.0;
+          vitals.fusionSources = detector.value.source_count ?? 1;
+        }
+      }
+      if (detector.detector === "fusion.heart_rate") {
+        if (detector.value?.value != null) {
+          vitals.heartRate = detector.value.value;
+        }
+      }
+      if (detector.detector === "fusion.presence") {
+        if (detector.value?.value != null) {
+          vitals.bedOccupied = detector.value.value;
+        }
+      }
+
+      // Track worst state (skip fusion meta-detectors for state)
+      if (!detector.detector.startsWith("fusion.")) {
+        if (stateOrder.indexOf(detector.state) > stateOrder.indexOf(worstState)) {
+          worstState = detector.state;
+        }
       }
     }
 

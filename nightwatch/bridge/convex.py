@@ -273,6 +273,17 @@ class ConvexBridge:
             if "signal_quality" in event.value:
                 reading["signalQuality"] = event.value["signal_quality"]
 
+        # Fusion channels override raw values with fused ones
+        elif event.detector == "fusion.respiration_rate":
+            if event.value.get("value") is not None:
+                reading["respirationRate"] = event.value["value"]
+                reading["fusionAgreement"] = event.value.get("agreement", 1.0)
+                reading["fusionSources"] = event.value.get("source_count", 1)
+
+        elif event.detector == "fusion.heart_rate":
+            if event.value.get("value") is not None:
+                reading["heartRate"] = event.value["value"]
+
         if reading:
             self._pending_readings.append(reading)
 

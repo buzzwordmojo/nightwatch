@@ -15,6 +15,7 @@ interface VitalCardProps {
   warningRange?: { low: number; high: number };
   criticalRange?: { low: number; high: number };
   showAsText?: boolean;
+  subtitle?: string;
 }
 
 // Map status string to Card variant
@@ -43,6 +44,7 @@ export function VitalCard({
   warningRange,
   criticalRange,
   showAsText,
+  subtitle,
 }: VitalCardProps) {
   // Derive status from value if ranges provided
   const derivedStatus = (() => {
@@ -122,7 +124,12 @@ export function VitalCard({
           )}
         </div>
 
-        {normalRange && typeof value === "number" && (
+        {subtitle && (
+          <p className="text-[10px] sm:text-xs text-muted-foreground mt-1">
+            {subtitle}
+          </p>
+        )}
+        {!subtitle && normalRange && typeof value === "number" && (
           <p className="hidden sm:block text-xs text-muted-foreground mt-2">
             Normal: {normalRange.min}–{normalRange.max} {unit}
           </p>

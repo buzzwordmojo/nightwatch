@@ -15,9 +15,10 @@ import sys
 from pathlib import Path
 
 from nightwatch import __version__
-from nightwatch.core.config import Config
+from nightwatch.core.config import Config, FusionConfig, FusionRule, FusionRuleSource
 from nightwatch.core.events import EventBus
 from nightwatch.core.engine import AlertEngine
+from nightwatch.core.fusion import FusionEngine
 from nightwatch.core.notifiers.audio import AudioNotifier
 from nightwatch.detectors.radar import RadarDetector
 from nightwatch.detectors.radar.detector import MockRadarDetector
@@ -295,6 +296,56 @@ async def run_nightwatch(
         if mock_sensors:
             print(f"🎛️  Simulator available at http://{config.dashboard.host}:{config.dashboard.port}/sim")
 
+    # Create fusion engine
+    fusion_config = FusionConfig(
+        signal_max_age_seconds=5.0,
+        cross_validation_enabled=True,
+        agreement_bonus=0.1,
+        disagreement_penalty=0.2,
+        rules=[
+            FusionRule(
+                signal="respiration_rate",
+                strategy="weighted_average",
+                min_sources=1,
+                sources=[
+                    FusionRuleSource(detector="radar", field="value.respiration_rate", weight=1.0),
+                    FusionRuleSource(detector="audio", field="value.breathing_rate", weight=0.7),
+                ],
+            ),
+            FusionRule(
+                signal="heart_rate",
+                strategy="weighted_average",
+                min_sources=1,
+                sources=[
+                    FusionRuleSource(detector="bcg", field="value.heart_rate", weight=1.0),
+                    FusionRuleSource(detector="radar", field="value.heart_rate_estimate", weight=0.4),
+                ],
+            ),
+            FusionRule(
+                signal="presence",
+                strategy="voting",
+                min_sources=1,
+                sources=[
+                    FusionRuleSource(detector="radar", field="value.presence", weight=1.0),
+                    FusionRuleSource(detector="bcg", field="value.bed_occupied", weight=1.0),
+                ],
+            ),
+            FusionRule(
+                signal="movement",
+                strategy="max",
+                min_sources=1,
+                sources=[
+                    FusionRuleSource(detector="radar", field="value.movement", weight=1.0),
+                ],
+            ),
+        ],
+    )
+    # Use config file rules if provided, otherwise use defaults above
+    if config.fusion.rules:
+        fusion_config = config.fusion
+    fusion_engine = FusionEngine(config=fusion_config)
+    print("🔀 Sensor fusion enabled")
+
     # Create Convex bridge (optional)
     convex_bridge = None
     convex_handler = None
@@ -302,6 +353,14 @@ async def run_nightwatch(
         convex_bridge = ConvexBridge()
         convex_handler = ConvexEventHandler(convex_bridge)
         print("🔗 Convex bridge enabled")
+
+    # Wire fusion output to Convex
+    async def on_fused_signal(fused):
+        """Push fused signals to Convex as events."""
+        if convex_handler:
+            await convex_handler(fused.to_event())
+
+    fusion_engine.on_channel_update = on_fused_signal
 
     # Wire up event handling
     async def on_event(event):
@@ -312,6 +371,10 @@ async def run_nightwatch(
 
         if convex_handler:
             await convex_handler(event)
+
+        # Feed into fusion engine (skip fusion events to prevent loops)
+        if not event.detector.startswith("fusion."):
+            await fusion_engine.process_event(event)
 
     for detector in detectors:
         detector.set_on_event(on_event)
@@ -329,6 +392,7 @@ async def run_nightwatch(
 
     # Start components
     await engine.start()
+    await fusion_engine.start()
 
     if dashboard:
         await dashboard.start()
@@ -393,6 +457,8 @@ async def run_nightwatch(
     # Cleanup
     for detector in detectors:
         await detector.stop()
+
+    await fusion_engine.stop()
 
     if dashboard:
         await dashboard.stop()

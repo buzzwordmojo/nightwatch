@@ -153,6 +153,9 @@ export function DashboardView({
             normalRange={{ min: 10, max: 25 }}
             warningRange={{ low: 6, high: 30 }}
             criticalRange={{ low: 4, high: 35 }}
+            subtitle={vitals?.fusionSources && vitals.fusionSources > 1
+              ? `${vitals.fusionSources} sensors · ${Math.round((vitals.fusionAgreement ?? 0) * 100)}% agree`
+              : undefined}
           />
         </MockBadgeWrapper>
 
