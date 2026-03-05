@@ -53,6 +53,28 @@ const TIME_RANGES = [
   { label: "8h", minutes: 480 },
 ];
 
+// Smooth numeric fields with a centered moving average
+function smoothData(data: Reading[], windowSize: number): Reading[] {
+  if (data.length < windowSize) return data;
+  const half = Math.floor(windowSize / 2);
+  const keys: (keyof Reading)[] = ["respirationRate", "heartRate", "breathingAmplitude", "movement", "signalQuality"];
+
+  return data.map((r, i) => {
+    const lo = Math.max(0, i - half);
+    const hi = Math.min(data.length - 1, i + half);
+    const window = data.slice(lo, hi + 1);
+    const smoothed: Reading = { ...r };
+
+    for (const key of keys) {
+      const vals = window.map((w) => w[key]).filter((v): v is number => v != null);
+      if (vals.length > 0) {
+        (smoothed as unknown as Record<string, number | undefined>)[key] = vals.reduce((a, b) => a + b, 0) / vals.length;
+      }
+    }
+    return smoothed;
+  });
+}
+
 // Downsample data by averaging readings within time buckets
 function downsampleData(data: Reading[], bucketSizeMs: number): Reading[] {
   if (data.length === 0) return [];
@@ -122,7 +144,8 @@ export function VitalsChart({ data }: VitalsChartProps) {
     } else if (timeRange > 15) {
       return downsampleData(rangeData, 60 * 1000); // 1-minute buckets
     }
-    return rangeData;
+    // Smooth short time ranges (1m, 5m, 15m) to reduce noise
+    return smoothData(rangeData, 5);
   })();
 
   // Transform data for Chart.js
@@ -137,7 +160,8 @@ export function VitalsChart({ data }: VitalsChartProps) {
         borderColor: "#3b82f6",
         backgroundColor: "rgba(59, 130, 246, 0.1)",
         fill: false,
-        tension: 0.3,
+        tension: 0.4,
+        cubicInterpolationMode: "monotone" as const,
         pointRadius: 0,
         borderWidth: 2,
         yAxisID: "y",
@@ -151,7 +175,8 @@ export function VitalsChart({ data }: VitalsChartProps) {
         borderColor: "#8b5cf6",
         backgroundColor: "rgba(139, 92, 246, 0.1)",
         fill: false,
-        tension: 0.3,
+        tension: 0.4,
+        cubicInterpolationMode: "monotone" as const,
         pointRadius: 0,
         borderWidth: 2,
         yAxisID: "y1",
@@ -165,7 +190,8 @@ export function VitalsChart({ data }: VitalsChartProps) {
         borderColor: "#10b981",
         backgroundColor: "rgba(16, 185, 129, 0.1)",
         fill: false,
-        tension: 0.3,
+        tension: 0.4,
+        cubicInterpolationMode: "monotone" as const,
         pointRadius: 0,
         borderWidth: 2,
         yAxisID: "y2",
@@ -179,7 +205,8 @@ export function VitalsChart({ data }: VitalsChartProps) {
         borderColor: "#f59e0b",
         backgroundColor: "rgba(245, 158, 11, 0.15)",
         fill: true,
-        tension: 0.2,
+        tension: 0.4,
+        cubicInterpolationMode: "monotone" as const,
         pointRadius: 0,
         borderWidth: 1.5,
         yAxisID: "y2",
