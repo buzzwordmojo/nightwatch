@@ -19,7 +19,9 @@ from nightwatch.core.config import Config, FusionConfig, FusionRule, FusionRuleS
 from nightwatch.core.events import EventBus
 from nightwatch.core.engine import AlertEngine
 from nightwatch.core.fusion import FusionEngine
+from nightwatch.core.heartbeat import HeartbeatReporter
 from nightwatch.core.notifiers.audio import AudioNotifier
+from nightwatch.core.notifiers.push import PushConfig, PushNotifier, PushProvider
 from nightwatch.detectors.radar import RadarDetector
 from nightwatch.detectors.radar.detector import MockRadarDetector
 from nightwatch.detectors.audio.detector import AudioDetector, MockAudioDetector
@@ -29,6 +31,21 @@ from nightwatch.bridge.convex import ConvexBridge, ConvexEventHandler
 from nightwatch.setup.portal import CaptivePortal
 from nightwatch.setup.hotspot import HotspotManager
 from nightwatch.setup.first_boot import detect_setup_state, SetupState
+
+
+def _missing_push_settings(settings: PushConfig) -> list[str]:
+    """Return the names of required push settings that are still empty."""
+    if settings.provider == PushProvider.PUSHOVER:
+        required = {
+            "pushover_user_key": settings.pushover_user_key,
+            "pushover_api_token": settings.pushover_api_token,
+        }
+    else:
+        required = {
+            "ntfy_server": settings.ntfy_server,
+            "ntfy_topic": settings.ntfy_topic,
+        }
+    return [name for name, value in required.items() if not value]
 
 
 async def run_setup_portal(
@@ -227,6 +244,33 @@ async def run_nightwatch(
     notifiers = []
     if config.notifiers.audio.enabled:
         notifiers.append(AudioNotifier(config.notifiers.audio))
+
+    # Push notifications are the only channel that reaches someone who is not
+    # in the room. Refuse to start one that is enabled but not configured -
+    # a silently dead notifier is worse than an obviously absent one.
+    push_cfg = config.notifiers.push
+    if push_cfg.enabled:
+        push_settings = PushConfig(
+            enabled=True,
+            provider=PushProvider(push_cfg.provider),
+            pushover_user_key=push_cfg.pushover_user_key,
+            pushover_api_token=push_cfg.pushover_api_token,
+            ntfy_server=push_cfg.ntfy_server,
+            ntfy_topic=push_cfg.ntfy_topic,
+        )
+        missing = _missing_push_settings(push_settings)
+        if missing:
+            print(
+                f"⚠️  Push notifications are enabled but not configured "
+                f"({push_cfg.provider}: missing {', '.join(missing)}). "
+                f"NO alerts will reach a phone."
+            )
+        else:
+            notifiers.append(PushNotifier(push_settings))
+            print(f"📲 Push notifications enabled via {push_cfg.provider}")
+
+    if not notifiers:
+        print("⚠️  No notifiers configured - alerts will not reach anyone.")
 
     # Create alert engine
     engine = AlertEngine(
@@ -436,6 +480,27 @@ async def run_nightwatch(
     if convex_bridge:
         status_task = asyncio.create_task(update_system_status())
 
+    # Off-device dead man's switch. Reports healthy only while the engine is
+    # running AND every detector is producing - a bare liveness ping would stay
+    # green with all the sensors dead.
+    async def monitoring_health() -> tuple[bool, str]:
+        if not engine.is_running:
+            return False, "alert engine is not running"
+        stalled = [d.name for d in detectors if not d.is_running]
+        if stalled:
+            return False, f"detector(s) not running: {', '.join(stalled)}"
+        if not detectors:
+            return False, "no detectors configured"
+        return True, ""
+
+    heartbeat = HeartbeatReporter(config.heartbeat, monitoring_health)
+    await heartbeat.start()
+    if not heartbeat.enabled:
+        print(
+            "⚠️  No off-device heartbeat configured - if this device dies, "
+            "nothing outside it will notice."
+        )
+
     print("=" * 40)
     print(f"✅ Monitoring started with {len(detectors)} detector(s)")
     print("Press Ctrl+C to stop")
@@ -453,6 +518,8 @@ async def run_nightwatch(
             await status_task
         except asyncio.CancelledError:
             pass
+
+    await heartbeat.stop()
 
     # Cleanup
     for detector in detectors:

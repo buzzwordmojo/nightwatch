@@ -323,3 +323,113 @@ class TestAlertEngine:
         assert state.active_alerts[0].acknowledged is True
 
         await engine.stop()
+
+
+class _RecordingNotifier:
+    """Notifier double that records lifecycle calls and delivery attempts."""
+
+    def __init__(self, *, deliver: bool = True, raise_on_notify: bool = False):
+        self.started = False
+        self.stopped = False
+        self.delivered: list[object] = []
+        self._deliver = deliver
+        self._raise_on_notify = raise_on_notify
+
+    @property
+    def name(self) -> str:
+        return "recording"
+
+    async def start(self) -> None:
+        self.started = True
+
+    async def stop(self) -> None:
+        self.stopped = True
+
+    async def notify(self, alert) -> bool:
+        if self._raise_on_notify:
+            raise RuntimeError("delivery exploded")
+        self.delivered.append(alert)
+        return self._deliver
+
+
+class TestNotifierDelivery:
+    """Alerts must actually reach a notifier, and failures must be visible."""
+
+    def _engine(self, notifiers):
+        config = AlertEngineConfig(
+            rules=[
+                AlertRuleConfig(
+                    name="Low respiration",
+                    conditions=[
+                        AlertRuleCondition(
+                            detector="radar",
+                            field="value.respiration_rate",
+                            operator="<",
+                            value=6,
+                        )
+                    ],
+                    severity="critical",
+                    cooldown_seconds=1,
+                )
+            ]
+        )
+        return AlertEngine(config=config, notifiers=notifiers)
+
+    def _low_respiration_event(self) -> Event:
+        return Event(
+            detector="radar",
+            timestamp=time.time(),
+            confidence=0.9,
+            state=EventState.WARNING,
+            value={"respiration_rate": 4},
+        )
+
+    @pytest.mark.asyncio
+    async def test_engine_starts_and_stops_notifiers(self):
+        """PushNotifier builds its HTTP client in start(); skipping it loses alerts."""
+        notifier = _RecordingNotifier()
+        engine = self._engine([notifier])
+
+        await engine.start()
+        assert notifier.started is True
+
+        await engine.stop()
+        assert notifier.stopped is True
+
+    @pytest.mark.asyncio
+    async def test_alert_is_delivered_to_notifier(self):
+        notifier = _RecordingNotifier()
+        engine = self._engine([notifier])
+
+        await engine.start()
+        await engine.process_event(self._low_respiration_event())
+        await engine.stop()
+
+        assert len(notifier.delivered) == 1
+        assert engine.undelivered_alerts == 0
+
+    @pytest.mark.asyncio
+    async def test_raising_notifier_is_counted_not_swallowed(self):
+        notifier = _RecordingNotifier(raise_on_notify=True)
+        engine = self._engine([notifier])
+
+        await engine.start()
+        await engine.process_event(self._low_respiration_event())
+        await engine.stop()
+
+        assert engine.undelivered_alerts == 1
+        assert engine.last_alert_delivered is False
+
+    @pytest.mark.asyncio
+    async def test_one_working_notifier_is_enough(self):
+        broken = _RecordingNotifier(raise_on_notify=True)
+        working = _RecordingNotifier()
+        engine = self._engine([broken, working])
+
+        await engine.start()
+        await engine.process_event(self._low_respiration_event())
+        await engine.stop()
+
+        assert len(working.delivered) == 1
+        assert engine.undelivered_alerts == 0
+        assert engine.last_alert_delivered is True

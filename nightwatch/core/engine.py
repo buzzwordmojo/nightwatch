@@ -11,6 +11,7 @@ The central coordinator that:
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -27,6 +28,8 @@ from nightwatch.core.events import (
     Publisher,
     Subscriber,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class AlertLevel(str, Enum):
@@ -382,10 +385,29 @@ class AlertEngine:
         self._pause_expires: float | None = None
         self._subscriber: Subscriber | None = None
 
+        # Delivery health - an alert nobody received must be observable.
+        self._last_alert_delivered: bool | None = None
+        self._undelivered_alerts = 0
+
         # Callbacks
         self.on_alert: Callable[[Alert], Awaitable[None]] | None = None
         self.on_state_change: Callable[[AlertState], Awaitable[None]] | None = None
         self.on_detector_offline: Callable[[str], Awaitable[None]] | None = None
+
+    @property
+    def is_running(self) -> bool:
+        """Whether the engine is processing events."""
+        return self._running
+
+    @property
+    def undelivered_alerts(self) -> int:
+        """Count of alerts that reached no notifier since startup."""
+        return self._undelivered_alerts
+
+    @property
+    def last_alert_delivered(self) -> bool | None:
+        """Whether the most recent alert reached at least one notifier."""
+        return self._last_alert_delivered
 
     async def start(self) -> None:
         """Start the alert engine."""
@@ -393,6 +415,19 @@ class AlertEngine:
             return
 
         self._running = True
+
+        # Start notifiers. Some (e.g. push) allocate their HTTP client here;
+        # skipping this leaves them unusable and alerts are lost at delivery time.
+        for notifier in self._notifiers:
+            try:
+                await notifier.start()
+            except Exception as e:
+                logger.error(
+                    "Notifier %s failed to start - alerts will NOT be delivered "
+                    "through it: %s",
+                    getattr(notifier, "name", type(notifier).__name__),
+                    e,
+                )
 
         # Subscribe to events if event bus provided
         if self._event_bus:
@@ -411,6 +446,16 @@ class AlertEngine:
             self._subscriber.stop()
             self._subscriber.close()
             self._subscriber = None
+
+        for notifier in self._notifiers:
+            try:
+                await notifier.stop()
+            except Exception as e:
+                logger.error(
+                    "Notifier %s failed to stop cleanly: %s",
+                    getattr(notifier, "name", type(notifier).__name__),
+                    e,
+                )
 
     async def process_event(self, event: Event) -> None:
         """
@@ -457,12 +502,44 @@ class AlertEngine:
         if self.on_state_change:
             await self.on_state_change(self.get_state())
 
-        # Send to notifiers
+        # Send to notifiers. An alert that reaches nobody is the worst failure
+        # this system has, so track delivery rather than swallowing errors.
+        delivered = 0
+        failed: list[str] = []
         for notifier in self._notifiers:
+            name = getattr(notifier, "name", type(notifier).__name__)
             try:
-                await notifier.notify(alert)
+                if await notifier.notify(alert):
+                    delivered += 1
             except Exception as e:
-                print(f"Notifier error: {e}")
+                failed.append(name)
+                logger.error(
+                    "Notifier %s raised while delivering alert %s (%s): %s",
+                    name,
+                    alert.rule_name,
+                    alert.severity.value,
+                    e,
+                )
+
+        self._last_alert_delivered = delivered > 0
+        if delivered == 0:
+            self._undelivered_alerts += 1
+            # A notifier may legitimately decline (severity filters), so only
+            # critical alerts reaching nobody warrant the loudest log level.
+            log = (
+                logger.critical
+                if alert.severity == EventSeverity.CRITICAL
+                else logger.warning
+            )
+            log(
+                "Alert '%s' (%s) was delivered to NOBODY - %d notifier(s) "
+                "configured, %d raised errors%s",
+                alert.rule_name,
+                alert.severity.value,
+                len(self._notifiers),
+                len(failed),
+                f" ({', '.join(failed)})" if failed else "",
+            )
 
     async def _health_check_loop(self) -> None:
         """Periodically check detector health."""

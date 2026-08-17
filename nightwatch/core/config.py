@@ -242,6 +242,37 @@ class EventSystemConfig(BaseModel):
     persist_interval_seconds: float = Field(default=60.0, ge=10.0)
 
 
+class HeartbeatConfig(BaseModel):
+    """
+    Configuration for the off-device dead man's switch.
+
+    Nightwatch pings an external service on an interval. If the pings stop,
+    that service raises the alarm. This is the only mechanism that catches
+    the device dying, since anything running on the device dies with it.
+
+    The endpoint must be OFF-PREMISES. A watchdog hosted in the same house
+    shares its power and internet, so a blackout silences the monitor and
+    its watchdog together and no alarm is ever raised.
+    """
+
+    enabled: bool = False
+    # Ping URL, e.g. a healthchecks.io check: https://hc-ping.com/<uuid>
+    url: str = ""
+    interval_seconds: float = Field(default=60.0, ge=10.0)
+    timeout_seconds: float = Field(default=10.0, ge=1.0)
+
+    # Only ping while actually monitoring. Without this the switch degrades
+    # into a liveness check: nightwatch could crash while the Pi stays up,
+    # and the watchdog would stay green forever.
+    require_healthy: bool = True
+    # Appended to url to actively signal a fault, so the watchdog alerts
+    # immediately instead of waiting out its grace period.
+    fail_path: str = "/fail"
+    # Detectors are allowed to be down this long after start before the
+    # heartbeat reports unhealthy (the USB radar can take ~6 min to enumerate).
+    startup_grace_seconds: float = Field(default=420.0, ge=0.0)
+
+
 class SystemConfig(BaseModel):
     """Top-level system configuration."""
 
@@ -260,6 +291,7 @@ class NightwatchConfig(BaseModel):
     fusion: FusionConfig = Field(default_factory=FusionConfig)
     notifiers: NotifiersConfig = Field(default_factory=NotifiersConfig)
     dashboard: DashboardConfig = Field(default_factory=DashboardConfig)
+    heartbeat: HeartbeatConfig = Field(default_factory=HeartbeatConfig)
 
 
 # ============================================================================
