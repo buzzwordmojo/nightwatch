@@ -1,0 +1,12 @@
+<!-- @dsCard group="Spacing" viewport="700x210" name="Elevation" subtitle="Surface step + border carry depth; shadow only reads over a lighter backdrop" -->
+<!DOCTYPE html><html><head><meta charset="utf-8"><link rel="stylesheet" href="../styles.css"><style>*{box-sizing:border-box}body{margin:0;padding:20px;background:var(--surface-app);color:var(--text-primary);font-family:var(--font-body)}.lbl{font-size:11px;color:var(--text-muted);margin-top:8px;text-align:center}</style></head><body>
+<div style="display:flex;gap:14px">
+<div style="text-align:center"><div style="width:150px;height:70px;background:var(--surface-app);border:1px solid var(--border-default);border-radius:var(--radius-lg);box-shadow:var(--shadow-sm)"></div><div class="lbl">app + border<br>flat</div></div>
+<div style="text-align:center"><div style="width:150px;height:70px;background:var(--surface-card);border:1px solid var(--border-default);border-radius:var(--radius-lg);box-shadow:var(--shadow-sm)"></div><div class="lbl">card + shadow-sm<br>every panel</div></div>
+<div style="text-align:center"><div style="width:150px;height:70px;background:var(--surface-raised);border:1px solid var(--border-strong);border-radius:var(--radius-lg);box-shadow:var(--shadow-md)"></div><div class="lbl">raised + shadow-md<br>popovers</div></div>
+<div style="text-align:center"><div style="width:150px;height:70px;background:var(--fill-critical);border:1px solid var(--border-critical);border-radius:var(--radius-lg);box-shadow:var(--shadow-critical)"></div><div class="lbl">critical card<br>red-tinted lift</div></div>
+</div>
+<div style="margin-top:16px;padding:16px;background:var(--night-700);border-radius:var(--radius-lg);display:flex;align-items:center;gap:14px">
+<div style="width:150px;height:54px;background:var(--surface-raised);border:1px solid var(--border-strong);border-radius:var(--radius-md);box-shadow:var(--shadow-lg)"></div>
+<div style="font-size:11px;color:var(--night-200);line-height:1.6">shadow-lg, shown over a lighter panel — the only place drop shadow is visible in this system.<br>On the near-black app background, depth comes from the surface step and the border, not the shadow.</div>
+</div></body></html>

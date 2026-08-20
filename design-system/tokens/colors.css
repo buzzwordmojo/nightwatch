@@ -1,0 +1,55 @@
+:root{
+/* ---- base: night scale (from nightwatch dark theme, hsl 222.2 84%) ---- */
+--night-1000:#020817; /* app background */
+--night-900:#071122;  /* card surface */
+--night-800:#0E1A2E;  /* raised surface */
+--night-700:#1E293B;  /* border / muted / secondary */
+--night-600:#334155;  /* hover border */
+--night-400:#94A3B8;  /* muted text */
+--night-200:#CBD5E1;
+--night-050:#F8FAFC;  /* foreground */
+
+/* ---- brand purple ---- */
+--purple-800:#5B21B6; /* brand mark + focus ring */
+--purple-600:#7C3AED; /* primary UI accent */
+--purple-500:#8B5CF6; /* hover / link */
+--purple-300:#C4B5FD;
+
+/* ---- semantic status ---- */
+--green-500:#16A34A;
+--amber-400:#FACC15;
+--red-500:#EF4444;
+--red-600:#D12B2B;
+--cyan-400:#22D3EE;
+--brand-purple:var(--purple-800); /* brand mark + wordmark accent */
+--brand-yellow:#FACC15; /* brand mark crescent */
+
+/* ---- semantic aliases ---- */
+--surface-app:var(--night-1000);
+--surface-card:var(--night-900);
+--surface-raised:var(--night-800);
+--surface-muted:var(--night-700);
+--border-default:var(--night-700);
+--border-strong:var(--night-600);
+--text-primary:var(--night-050);
+--text-muted:var(--night-400);
+--text-inverse:#0F1B2E;
+--accent-primary:var(--purple-600);
+--accent-hover:var(--purple-500);
+--focus-ring:var(--purple-800);
+--text-on-accent:#FFFFFF;
+--status-normal:var(--green-500);
+--status-warning:var(--amber-400);
+--status-critical:var(--red-500);
+--status-offline:var(--night-400);
+--status-simulated:var(--cyan-400);
+
+/* tinted status fills — the app always pairs a 50%-alpha border with a 5–20% fill */
+--fill-normal:rgba(22,163,74,.10);
+--fill-warning:rgba(250,204,21,.10);
+--fill-critical:rgba(239,68,68,.10);
+--fill-accent:rgba(124,58,237,.12);
+--border-normal:rgba(22,163,74,.50);
+--border-warning:rgba(250,204,21,.50);
+--border-critical:rgba(239,68,68,.50);
+}

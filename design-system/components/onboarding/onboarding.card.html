@@ -1,0 +1,28 @@
+<!-- @dsCard group="Components" viewport="700x360" name="Onboarding" subtitle="StepProgress, FeatureItem, SensorItem, NetworkRow, TextField" -->
+<!DOCTYPE html><html><head><meta charset="utf-8"><link rel="stylesheet" href="../../styles.css">
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.js"></script>
+<script src="../../_ds_bundle.js"></script>
+<style>*{box-sizing:border-box}body{margin:0;padding:20px;background:var(--surface-app);color:var(--text-primary);font-family:var(--font-body)}</style></head><body><div id="root"></div>
+<script type="text/babel">
+const {StepProgress, FeatureItem, SensorItem, NetworkRow, TextField} = window.KnightWatcherDesignSystem_3ee9cb;
+function Icon({name,size=16,color="currentColor"}){const ref=React.useRef(null);React.useEffect(()=>{if(ref.current){ref.current.innerHTML=lucide.createElement(lucide[name]).outerHTML;const s=ref.current.querySelector("svg");if(s){s.setAttribute("width",size);s.setAttribute("height",size);s.style.color=color;}}},[name,size]);return <span ref={ref} style={{display:"inline-flex"}}/>;}
+
+function App(){const[pw,setPw]=React.useState("hunter2");const[show,setShow]=React.useState(false);
+return <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+<div style={{display:"flex",flexDirection:"column",gap:14}}>
+<StepProgress current={3} total={6}/>
+<FeatureItem icon={<Icon name="ShieldCheck" size={20}/>} title="Private & secure" description="All data stays on your device — no cloud required"/>
+<SensorItem name="Radar Sensor" description="Detects breathing and movement" detected signal={85} required icon={<Icon name="Check" size={20}/>}/>
+<SensorItem name="BCG Sensor" description="Measures heart rate via mattress" optional icon={<Icon name="X" size={20}/>}/>
+</div>
+<div style={{display:"flex",flexDirection:"column",gap:10}}>
+<NetworkRow ssid="Home-5G" signal={82} secured selected icon={<Icon name="Wifi" size={16}/>} lockIcon={<Icon name="Lock" size={12}/>}/>
+<NetworkRow ssid="Nest-Guest" signal={46} secured icon={<Icon name="Wifi" size={16}/>} lockIcon={<Icon name="Lock" size={12}/>}/>
+<TextField type={show?"text":"password"} value={pw} onChange={setPw} leadingIcon={<Icon name="Lock" size={16}/>} trailingIcon={<Icon name={show?"EyeOff":"Eye"} size={16}/>} onTrailingClick={()=>setShow(!show)}/>
+<TextField value="" placeholder="Miles" onChange={()=>{}} error="Password must be at least 8 characters"/>
+</div></div>;}
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script></body></html>

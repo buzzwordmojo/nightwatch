@@ -1,0 +1,33 @@
+:root{
+--font-display:"Space Grotesk",ui-sans-serif,system-ui,sans-serif;
+--font-body:"Space Grotesk",ui-sans-serif,system-ui,sans-serif;
+--font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,monospace;
+
+--text-2xs:10px;
+--text-xs:12px;
+--text-sm:14px;
+--text-base:16px;
+--text-lg:18px;
+--text-xl:20px;
+--text-2xl:24px;
+--text-4xl:36px;
+--text-5xl:48px;
+--text-7xl:72px;
+
+--leading-none:1;
+--leading-tight:1.15;
+--leading-snug:1.35;
+--leading-normal:1.5;
+--leading-relaxed:1.65;
+
+--weight-light:300;
+--weight-regular:400;
+--weight-medium:500;
+--weight-semibold:600;
+--weight-bold:700;
+
+--tracking-tight:-0.02em;
+--tracking-normal:0;
+--tracking-wide:0.06em;
+--tracking-wider:0.12em; /* uppercase micro-labels only */
+}

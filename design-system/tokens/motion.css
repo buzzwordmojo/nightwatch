@@ -1,0 +1,14 @@
+:root{
+--ease-standard:cubic-bezier(.4,0,.2,1); /* @kind other */
+--dur-fast:150ms; /* @kind other */
+--dur-base:200ms; /* @kind other */
+--dur-slow:300ms; /* @kind other */
+--dur-breathe:4s; /* @kind other */
+--dur-pulse-slow:2s; /* @kind other */
+--dur-pulse-fast:.75s; /* @kind other */
+}
+@keyframes kw-breathe{0%,100%{transform:scale(1);opacity:.8}50%{transform:scale(1.05);opacity:1}}
+@keyframes kw-pulse-ring{0%{transform:scale(.95);opacity:1}50%{transform:scale(1);opacity:.5}100%{transform:scale(.95);opacity:1}}
+@keyframes kw-pulse-slow{0%,100%{opacity:1}50%{opacity:.7}}
+@keyframes kw-pulse-fast{0%,100%{opacity:1}50%{opacity:.8}}
+@keyframes kw-breathing-glow{0%,100%{box-shadow:var(--glow-normal-rest)}50%{box-shadow:var(--glow-normal)}}

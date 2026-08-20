@@ -1,0 +1,76 @@
+<!-- @dsCard group="Dashboard" viewport="1280x760" name="Dashboard app" subtitle="Monitoring, setup wizard, settings, and Wi-Fi portal" -->
+<!-- @startingPoint section="Dashboard" subtitle="KnightWatcher device dashboard" viewport="1280x760" -->
+<!DOCTYPE html><html><head><meta charset="utf-8"><title>KnightWatcher — Dashboard</title>
+<link rel="stylesheet" href="../../styles.css">
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.js"></script>
+<script src="../../_ds_bundle.js"></script>
+<style>*{box-sizing:border-box}html,body{margin:0;background:var(--surface-app);color:var(--text-primary);font-family:var(--font-body)}
+a{color:var(--accent-primary);text-decoration:none}a:hover{color:var(--accent-hover)}
+.kw-tabs{position:fixed;bottom:16px;right:16px;z-index:50;display:flex;gap:4px;padding:4px;border-radius:var(--radius-full);background:var(--surface-raised);border:1px solid var(--border-default);box-shadow:var(--shadow-lg)}
+.kw-tabs button{border:none;background:transparent;color:var(--text-muted);font-family:var(--font-body);font-size:13px;padding:6px 14px;border-radius:var(--radius-full);cursor:pointer}
+.kw-tabs button[data-on="1"]{background:var(--accent-primary);color:var(--text-on-accent);font-weight:500}</style></head>
+<body><div id="root"></div>
+<script type="text/babel" src="icon.jsx"></script>
+<script type="text/babel" src="DashboardScreen.jsx"></script>
+<script type="text/babel" src="SetupScreen.jsx"></script>
+<script type="text/babel" src="SettingsScreen.jsx"></script>
+<script type="text/babel" src="PortalScreen.jsx"></script>
+<script type="text/babel">
+const SERIES = { resp: [16,17,16,15,16,18,17,16,15,14,16,17,16,16,15,17,16,15,16,17], hr: [72,74,71,70,73,75,72,70,69,71,73,72,70,71,74,72,70,69,71,72] };
+
+function App() {
+  const [screen, setScreen] = React.useState("dashboard");
+  const [paused, setPaused] = React.useState(false);
+  const [listening, setListening] = React.useState(false);
+  const [alerts, setAlerts] = React.useState([]);
+  const [audioLevel, setAudioLevel] = React.useState(0.28);
+  const [vitals, setVitals] = React.useState({ hr: 72, resp: 16, breathing: true });
+
+  React.useEffect(() => {
+    const t = setInterval(() => {
+      setVitals((v) => ({ ...v, hr: 68 + Math.round(Math.random() * 8), resp: 14 + Math.round(Math.random() * 4) }));
+      setAudioLevel(0.2 + Math.random() * 0.25);
+    }, 2200);
+    return () => clearInterval(t);
+  }, []);
+
+  const state = {
+    vitals, alerts, paused, remaining: 15, listening, audioLevel, series: SERIES,
+    sensors: [
+      { key: "radar", label: "Radar", icon: <Icon name="Radio" size={12} />, connected: true, status: "running" },
+      { key: "audio", label: "Audio", icon: <Icon name="Mic" size={12} />, connected: true, status: "running", mock: true },
+      { key: "bcg", label: "BCG", icon: <Icon name="Activity" size={12} />, connected: false },
+    ],
+    events: [
+      { id: "e1", source: "radar", level: "warning", message: "Respiration below 8 BPM", startTime: "2:14 AM", endTime: "2:15 AM", duration: "1m 20s", count: 3 },
+      { id: "e2", source: "audio", level: "critical", message: "No breathing sound for 20s", startTime: "1:02 AM", endTime: "1:03 AM", duration: "42s" },
+    ],
+    pause: () => setPaused(true),
+    resume: () => setPaused(false),
+    toggleListen: () => setListening((l) => !l),
+    acknowledge: (id) => setAlerts((a) => a.map((x) => (x.id === id ? { ...x, acknowledged: true } : x))),
+    resolve: (id) => setAlerts((a) => a.filter((x) => x.id !== id)),
+  };
+
+  const triggerAlert = () => setAlerts([{ id: "a" + Date.now(), level: "critical", message: "No respiration detected", source: "radar", time: "2:14 AM" }]);
+
+  return (
+    <div style={{ minHeight: "100vh", paddingBottom: 96 }}>
+      {screen === "dashboard" && <DashboardScreen state={state} onNavigate={setScreen} />}
+      {screen === "setup" && <SetupScreen onExit={() => setScreen("dashboard")} />}
+      {screen === "settings" && <SettingsScreen onBack={() => setScreen("dashboard")} />}
+      {screen === "portal" && <PortalScreen />}
+      <div className="kw-tabs">
+        {[["dashboard", "Dashboard"], ["setup", "Setup"], ["settings", "Settings"], ["portal", "Wi-Fi portal"]].map(([k, l]) => (
+          <button key={k} data-on={screen === k ? "1" : "0"} onClick={() => setScreen(k)}>{l}</button>
+        ))}
+        <button onClick={triggerAlert} title="Simulate a critical alert">Trigger alert</button>
+      </div>
+    </div>
+  );
+}
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script></body></html>

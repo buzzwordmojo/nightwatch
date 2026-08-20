@@ -1,0 +1,11 @@
+<!-- @dsCard group="Brand" viewport="700x340" name="Purple candidates" subtitle="Deepening the shield and wordmark — pick one" -->
+<!DOCTYPE html><html><head><meta charset="utf-8"><link rel="stylesheet" href="../styles.css"><style>*{box-sizing:border-box}body{margin:0;padding:20px;background:var(--surface-app);color:var(--text-primary);font-family:var(--font-body)}.r{display:flex;align-items:center;gap:20px;padding:10px 0;border-bottom:1px solid var(--border-default)}.r:last-child{border:none}.m{font-family:var(--font-mono);font-size:11px;color:var(--text-muted);width:150px}</style></head><body>
+<div id="rows"></div>
+<script>
+const opts=[["#7C3AED","violet-600 · current"],["#6D28D9","violet-700"],["#5B21B6","violet-800"],["#4C1D95","violet-900"],["#3B0F73","deep aubergine"]];
+document.getElementById("rows").innerHTML=opts.map(([p,n])=>`<div class="r">
+<svg viewBox="0 0 48 56" height="38" fill="none"><path d="M24 2.6 44.4 11.2v18.4c0 13.1-9 21.7-20.4 25.4C12.6 51.3 3.6 42.7 3.6 29.6V11.2z" stroke="${p}" stroke-width="3.4" stroke-linejoin="round"/><path d="M27.6 17.6a10 10 0 1 0 0 20 12.6 12.6 0 0 1 0-20z" fill="#FACC15"/></svg>
+<span style="font-size:30px;font-weight:700;letter-spacing:-.02em">Knight<span style="color:${p}">Watcher</span></span>
+<span style="width:44px;height:28px;border-radius:6px;background:${p};margin-left:auto"></span>
+<span class="m">${p}<br>${n}</span></div>`).join("");
+</script></body></html>
