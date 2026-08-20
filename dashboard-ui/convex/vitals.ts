@@ -1,5 +1,37 @@
-import { mutation, query } from "./_generated/server";
+import { mutation, query, internalMutation } from "./_generated/server";
+import { internal } from "./_generated/api";
 import { v } from "convex/values";
+
+// ============================================================================
+// Retention policy
+//
+// Nothing bounded these tables before, so the database grew without limit
+// until sustained writes stalled the SD card and froze the device. Retention
+// is deliberately tight: the goal is a database whose size stays roughly
+// CONSTANT, not one that merely grows slower.
+//
+// radarSignal is the firehose - inserted at ~11 Hz, which is ~950k rows/day.
+// The schema always described it as a "5 minute rolling window"; the cleanup
+// default of 12 hours contradicted that by a factor of 144.
+// ============================================================================
+
+export const RETENTION = {
+  // Raw radar samples: visualisation only, never needed historically.
+  radarSignalMinutes: 5,
+  // Vitals history: what the charts read.
+  readingsHours: 48,
+  // Resolved alerts older than this are dropped; unresolved are always kept.
+  alertsDays: 30,
+} as const;
+
+// Rows deleted per pass. Each delete is itself a write, so keep passes small
+// and frequent rather than large and bursty - a struggling card copes far
+// better with a steady trickle than with a spike.
+const PRUNE_BATCH = 500;
+
+// Bound on self-rescheduling passes, so a large backlog drains over several
+// invocations instead of looping unbounded inside one.
+const MAX_PASSES = 20;
 
 // Update detector state (called by Python backend)
 export const updateDetector = mutation({
@@ -275,5 +307,92 @@ export const cleanupRadarSignal = mutation({
     }
 
     return { deleted, more: oldSignals.length === 500 };
+  },
+});
+
+// ============================================================================
+// Scheduled retention (called by convex/crons.ts)
+//
+// The public mutations above delete at most one batch per call, which is
+// fine for the manual "clean up now" button but cannot keep up on its own:
+// radarSignal arrives at ~11 Hz (~660 rows/minute), so a once-a-minute
+// 500-row pass falls permanently behind. These internal versions reschedule
+// themselves until the backlog is drained.
+// ============================================================================
+
+export const pruneRadarSignal = internalMutation({
+  args: { pass: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const pass = args.pass ?? 1;
+    const cutoff = Date.now() - RETENTION.radarSignalMinutes * 60 * 1000;
+
+    const old = await ctx.db
+      .query("radarSignal")
+      .withIndex("by_timestamp", (q) => q.lt("timestamp", cutoff))
+      .take(PRUNE_BATCH);
+
+    for (const row of old) {
+      await ctx.db.delete(row._id);
+    }
+
+    const more = old.length === PRUNE_BATCH;
+    if (more && pass < MAX_PASSES) {
+      await ctx.scheduler.runAfter(0, internal.vitals.pruneRadarSignal, {
+        pass: pass + 1,
+      });
+    }
+    return { deleted: old.length, pass, more };
+  },
+});
+
+export const pruneReadings = internalMutation({
+  args: { pass: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const pass = args.pass ?? 1;
+    const cutoff = Date.now() - RETENTION.readingsHours * 60 * 60 * 1000;
+
+    const old = await ctx.db
+      .query("readings")
+      .withIndex("by_timestamp", (q) => q.lt("timestamp", cutoff))
+      .take(PRUNE_BATCH);
+
+    for (const row of old) {
+      await ctx.db.delete(row._id);
+    }
+
+    const more = old.length === PRUNE_BATCH;
+    if (more && pass < MAX_PASSES) {
+      await ctx.scheduler.runAfter(0, internal.vitals.pruneReadings, {
+        pass: pass + 1,
+      });
+    }
+    return { deleted: old.length, pass, more };
+  },
+});
+
+export const pruneAlerts = internalMutation({
+  args: { pass: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const pass = args.pass ?? 1;
+    const cutoff = Date.now() - RETENTION.alertsDays * 24 * 60 * 60 * 1000;
+
+    const old = await ctx.db
+      .query("alerts")
+      .withIndex("by_triggered", (q) => q.lt("triggeredAt", cutoff))
+      .take(PRUNE_BATCH);
+
+    // An unresolved alert is never discarded, however old it is.
+    const stale = old.filter((a) => a.resolved);
+    for (const row of stale) {
+      await ctx.db.delete(row._id);
+    }
+
+    const more = old.length === PRUNE_BATCH;
+    if (more && pass < MAX_PASSES) {
+      await ctx.scheduler.runAfter(0, internal.vitals.pruneAlerts, {
+        pass: pass + 1,
+      });
+    }
+    return { deleted: stale.length, scanned: old.length, pass, more };
   },
 });
