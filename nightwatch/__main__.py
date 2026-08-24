@@ -34,6 +34,11 @@ from nightwatch.setup.hotspot import HotspotManager
 from nightwatch.setup.first_boot import detect_setup_state, SetupState
 
 
+def _ntfy_is_public(server: str) -> bool:
+    """Whether this is the public ntfy.sh, which accepts anonymous publishes."""
+    return "ntfy.sh" in (server or "")
+
+
 def _missing_push_settings(settings: PushConfig) -> list[str]:
     """Return the names of required push settings that are still empty."""
     if settings.provider == PushProvider.PUSHOVER:
@@ -46,6 +51,14 @@ def _missing_push_settings(settings: PushConfig) -> list[str]:
             "ntfy_server": settings.ntfy_server,
             "ntfy_topic": settings.ntfy_topic,
         }
+        # A private server rejects anonymous publishes with a 403, which would
+        # look exactly like working right up until an alert mattered. Treat
+        # missing credentials as missing configuration.
+        if not _ntfy_is_public(settings.ntfy_server):
+            required["ntfy_token or ntfy_username/ntfy_password"] = (
+                settings.ntfy_token
+                or (settings.ntfy_username and settings.ntfy_password)
+            )
     return [name for name, value in required.items() if not value]
 
 
@@ -258,6 +271,9 @@ async def run_nightwatch(
             pushover_api_token=push_cfg.pushover_api_token,
             ntfy_server=push_cfg.ntfy_server,
             ntfy_topic=push_cfg.ntfy_topic,
+            ntfy_token=push_cfg.ntfy_token,
+            ntfy_username=push_cfg.ntfy_username,
+            ntfy_password=push_cfg.ntfy_password,
         )
         missing = _missing_push_settings(push_settings)
         if missing:

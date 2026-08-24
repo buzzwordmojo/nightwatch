@@ -6,6 +6,7 @@ Supports Pushover and Ntfy for sending push notifications to mobile devices.
 
 from __future__ import annotations
 
+import base64
 import logging
 from dataclasses import dataclass
 from enum import Enum
@@ -40,6 +41,12 @@ class PushConfig:
     # Ntfy settings
     ntfy_server: str = "https://ntfy.sh"
     ntfy_topic: str = ""
+    # A self-hosted server with auth-default-access=deny-all refuses unauthenticated
+    # publishes, so an alert would be silently rejected with a 403. Supply either a
+    # token or a username/password pair.
+    ntfy_token: str = ""
+    ntfy_username: str = ""
+    ntfy_password: str = ""
 
     # Alert level filtering
     alert_levels: list[str] | None = None
@@ -54,6 +61,9 @@ class PushConfig:
             pushover_api_token=config.get("pushover_api_token", ""),
             ntfy_server=config.get("ntfy_server", "https://ntfy.sh"),
             ntfy_topic=config.get("ntfy_topic", ""),
+            ntfy_token=config.get("ntfy_token", ""),
+            ntfy_username=config.get("ntfy_username", ""),
+            ntfy_password=config.get("ntfy_password", ""),
             alert_levels=config.get("alert_levels"),
         )
 
@@ -228,6 +238,10 @@ class PushNotifier(BaseNotifier):
             "Tags": self._get_ntfy_tags(alert.severity),
         }
 
+        auth = self._ntfy_auth_header()
+        if auth:
+            headers["Authorization"] = auth
+
         try:
             response = await self._client.post(
                 url,
@@ -247,6 +261,20 @@ class PushNotifier(BaseNotifier):
         except Exception as e:
             logger.error(f"Failed to send Ntfy notification: {e}")
             return False
+
+    def _ntfy_auth_header(self) -> str | None:
+        """
+        Build the Authorization header for ntfy, if credentials were given.
+
+        A token wins over username/password when both are set - it is the more
+        narrowly scoped credential.
+        """
+        if self._config.ntfy_token:
+            return f"Bearer {self._config.ntfy_token}"
+        if self._config.ntfy_username and self._config.ntfy_password:
+            raw = f"{self._config.ntfy_username}:{self._config.ntfy_password}"
+            return "Basic " + base64.b64encode(raw.encode()).decode()
+        return None
 
     def _get_ntfy_tags(self, severity: EventSeverity) -> str:
         """Get Ntfy tags (emoji) based on severity."""

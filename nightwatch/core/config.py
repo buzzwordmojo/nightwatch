@@ -166,6 +166,9 @@ class PushNotifierConfig(BaseModel):
     pushover_api_token: str = ""
     ntfy_server: str = "https://ntfy.sh"
     ntfy_topic: str = ""
+    ntfy_token: str = ""
+    ntfy_username: str = ""
+    ntfy_password: str = ""
     retry_count: int = Field(default=3, ge=0, le=10)
     retry_delay_seconds: float = Field(default=5.0, ge=1.0)
 
