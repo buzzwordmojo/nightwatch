@@ -700,3 +700,7 @@ class Config:
     @property
     def dashboard(self) -> DashboardConfig:
         return self._typed.dashboard
+
+    @property
+    def heartbeat(self) -> HeartbeatConfig:
+        return self._typed.heartbeat
