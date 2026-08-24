@@ -83,60 +83,7 @@ export const remove = mutation({
   },
 });
 
-// Seed default rules from config
-export const seedDefaults = mutation({
-  args: {},
-  handler: async (ctx) => {
-    const defaults = [
-      {
-        name: "Respiration critical",
-        enabled: true,
-        detector: "radar",
-        field: "value.respiration_rate",
-        operator: "<",
-        value: 4,
-        durationSeconds: 10,
-        severity: "critical",
-        message: "Respiration rate critically low ({respiration_rate} BPM)",
-        cooldownSeconds: 60,
-      },
-      {
-        name: "Respiration low",
-        enabled: true,
-        detector: "radar",
-        field: "value.respiration_rate",
-        operator: "<",
-        value: 8,
-        durationSeconds: 15,
-        severity: "warning",
-        message: "Respiration rate low ({respiration_rate} BPM)",
-        cooldownSeconds: 30,
-      },
-      {
-        name: "Subject not detected",
-        enabled: true,
-        detector: "radar",
-        field: "value.presence",
-        operator: "==",
-        value: 0,
-        durationSeconds: 30,
-        severity: "warning",
-        message: "Subject not detected by radar",
-        cooldownSeconds: 60,
-      },
-    ];
-
-    for (const rule of defaults) {
-      const existing = await ctx.db
-        .query("alertRules")
-        .withIndex("by_name", (q) => q.eq("name", rule.name))
-        .first();
-
-      if (!existing) {
-        await ctx.db.insert("alertRules", rule);
-      }
-    }
-
-    return true;
-  },
-});
+// NOTE: there is deliberately no seedDefaults here.
+// The monitor seeds this table from its own config.yaml at startup
+// (nightwatch/core/alert_rules.py). A second seeder in the dashboard would race
+// it with a hardcoded copy of the thresholds that could drift from the real ones.

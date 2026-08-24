@@ -21,6 +21,10 @@ from nightwatch.core.events import Event, EventState
 logger = logging.getLogger(__name__)
 
 
+class ConvexUnavailableError(RuntimeError):
+    """Convex could not be reached. Distinct from Convex answering with no data."""
+
+
 @dataclass
 class ConvexConfig:
     """Configuration for Convex connection."""
@@ -353,6 +357,68 @@ class ConvexBridge:
         except httpx.HTTPError:
             self._record_failure()
             raise
+
+    async def query(self, path: str, args: dict[str, Any] | None = None) -> Any:
+        """
+        Call a Convex query and return its unwrapped value.
+
+        Mirrors _mutation's failure/backoff accounting. Unlike _mutation, callers
+        need the result, so the Convex response envelope is unwrapped here rather
+        than in every call site.
+
+        Raises rather than returning a sentinel: a caller that cannot tell "no
+        rows" from "could not reach Convex" will eventually treat an outage as an
+        empty result, and for alert rules that means silently disarming.
+        """
+        if not self._client:
+            raise RuntimeError("Client not initialized")
+
+        if self._is_backed_off():
+            raise ConvexUnavailableError(
+                f"Convex is in backoff ({self._consecutive_failures} consecutive failures)"
+            )
+
+        try:
+            response = await self._client.post(
+                "/api/query",
+                json={
+                    "path": path,
+                    "args": args or {},
+                    "format": "json",
+                },
+            )
+
+            if response.status_code != 200:
+                self._record_failure()
+                raise RuntimeError(f"Convex query failed: {response.text}")
+
+            self._record_success()
+            payload = response.json()
+
+            # Convex answers with {"status": "success", "value": ...} or
+            # {"status": "error", "errorMessage": ...}.
+            if isinstance(payload, dict) and "status" in payload:
+                if payload["status"] != "success":
+                    raise RuntimeError(
+                        f"Convex query '{path}' errored: "
+                        f"{payload.get('errorMessage') or payload}"
+                    )
+                return payload.get("value")
+            return payload
+
+        except httpx.ConnectError as e:
+            self._record_failure()
+            raise ConvexUnavailableError(str(e)) from e
+        except httpx.TimeoutException as e:
+            self._record_failure()
+            raise ConvexUnavailableError(str(e)) from e
+        except httpx.HTTPError as e:
+            self._record_failure()
+            raise ConvexUnavailableError(str(e)) from e
+
+    async def mutation(self, path: str, args: dict[str, Any]) -> Any:
+        """Public wrapper around _mutation for callers outside this module."""
+        return await self._mutation(path, args)
 
     @staticmethod
     def _event_state_to_string(state: EventState) -> str:

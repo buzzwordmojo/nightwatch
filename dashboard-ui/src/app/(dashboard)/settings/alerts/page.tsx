@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../../../../convex/_generated/api";
 import { Card, CardContent } from "@/components/ui/card";
@@ -21,20 +21,12 @@ interface AlertRule {
 
 export default function AlertSettingsPage() {
   const rules = useQuery(api.alertRules.list);
-  const seedDefaults = useMutation(api.alertRules.seedDefaults);
   const upsertRule = useMutation(api.alertRules.upsert);
   const toggleRule = useMutation(api.alertRules.toggle);
   const removeRule = useMutation(api.alertRules.remove);
 
   const [expandedRule, setExpandedRule] = useState<string | null>(null);
   const [editingRule, setEditingRule] = useState<AlertRule | null>(null);
-
-  // Seed defaults if no rules exist
-  useEffect(() => {
-    if (rules !== undefined && rules.length === 0) {
-      seedDefaults({});
-    }
-  }, [rules, seedDefaults]);
 
   const handleToggle = async (name: string) => {
     await toggleRule({ name });
@@ -308,22 +300,17 @@ export default function AlertSettingsPage() {
               <AlertTriangle className="h-6 w-6 text-muted-foreground" />
             </div>
             <h3 className="font-medium mb-1">No alert rules</h3>
-            <p className="text-sm text-muted-foreground mb-4">
-              Default rules will be created automatically
+            <p className="text-sm text-muted-foreground">
+              The monitor publishes its rules here when it starts. An empty list
+              means it is not running &mdash; nothing is being watched for.
             </p>
-            <button
-              onClick={() => seedDefaults({})}
-              className="px-4 py-2 rounded-md bg-primary text-primary-foreground font-medium hover:bg-primary/90 transition-colors"
-            >
-              Create Default Rules
-            </button>
           </CardContent>
         </Card>
       )}
 
       {/* Info text */}
       <p className="text-xs text-muted-foreground text-center">
-        Changes to alert rules will be synced to the backend on next restart
+        Changes take effect on the monitor within a few seconds
       </p>
     </div>
   );

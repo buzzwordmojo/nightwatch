@@ -18,6 +18,7 @@ from nightwatch import __version__
 from nightwatch.core.config import Config, FusionConfig, FusionRule, FusionRuleSource
 from nightwatch.core.events import EventBus
 from nightwatch.core.engine import AlertEngine
+from nightwatch.core.alert_rules import AlertRulesSync
 from nightwatch.core.fusion import FusionEngine
 from nightwatch.core.heartbeat import HeartbeatReporter
 from nightwatch.core.notifiers.audio import AudioNotifier
@@ -444,6 +445,34 @@ async def run_nightwatch(
     if convex_bridge:
         await convex_bridge.start()
 
+    # Alert thresholds are edited in the dashboard, which writes them to Convex.
+    # Sync them into the engine so those edits actually change what fires; until
+    # this existed the dashboard's threshold editor was purely cosmetic.
+    rules_sync = None
+    if convex_bridge:
+        rules_sync = AlertRulesSync(
+            engine=engine,
+            bridge=convex_bridge,
+            fallback_rules=config.alert_engine.rules,
+        )
+        await rules_sync.start()
+        print(f"🔔 Alert rules synced from dashboard: {len(engine.rule_names)} armed")
+        for name in engine.rule_names:
+            print(f"  ✓ {name}")
+        if rules_sync.local_only_rule_names:
+            print(
+                f"  ⚠️  Not editable in the dashboard (multi-condition): "
+                f"{', '.join(rules_sync.local_only_rule_names)}"
+            )
+    else:
+        print(
+            f"🔔 Alert rules from config.yaml: {len(engine.rule_names)} armed "
+            f"(no Convex bridge - dashboard edits will not apply)"
+        )
+
+    if not engine.rule_names:
+        print("⚠️  NO alert rules are armed - no threshold alert can fire.")
+
     for detector in detectors:
         await detector.start()
         if detector.status.value == "waiting":
@@ -529,6 +558,9 @@ async def run_nightwatch(
 
     if dashboard:
         await dashboard.stop()
+
+    if rules_sync:
+        await rules_sync.stop()
 
     if convex_bridge:
         await convex_bridge.stop()

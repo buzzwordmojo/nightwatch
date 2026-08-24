@@ -53,6 +53,30 @@ class AlertState:
 
 
 @dataclass
+class RuleSyncResult:
+    """What changed when a new set of rule configs was applied."""
+
+    added: list[str] = field(default_factory=list)
+    updated: list[str] = field(default_factory=list)
+    removed: list[str] = field(default_factory=list)
+    unchanged: list[str] = field(default_factory=list)
+
+    @property
+    def changed(self) -> bool:
+        return bool(self.added or self.updated or self.removed)
+
+    def describe(self) -> str:
+        parts = []
+        if self.added:
+            parts.append(f"added {', '.join(sorted(self.added))}")
+        if self.updated:
+            parts.append(f"updated {', '.join(sorted(self.updated))}")
+        if self.removed:
+            parts.append(f"removed {', '.join(sorted(self.removed))}")
+        return "; ".join(parts) if parts else "no changes"
+
+
+@dataclass
 class RuleState:
     """Tracking state for a single rule."""
 
@@ -149,6 +173,11 @@ class Rule:
 
         self._state = RuleState()
 
+        # The config this rule was built from, when there was one. Used to detect
+        # whether an incoming config actually differs, so unchanged rules keep
+        # their Rule object - and with it their duration timers and cooldown.
+        self.source_config: AlertRuleConfig | None = None
+
     @classmethod
     def from_config(cls, config: AlertRuleConfig) -> Rule:
         """Create rule from configuration."""
@@ -163,7 +192,7 @@ class Rule:
             for c in config.conditions
         ]
 
-        return cls(
+        rule = cls(
             name=config.name,
             conditions=conditions,
             severity=EventSeverity(config.severity),
@@ -172,6 +201,8 @@ class Rule:
             cooldown_seconds=config.cooldown_seconds,
             message_template=config.message,
         )
+        rule.source_config = config
+        return rule
 
     def evaluate(
         self,
@@ -611,6 +642,62 @@ class AlertEngine:
     def get_current_event(self, detector: str) -> Event | None:
         """Get the most recent event from a detector."""
         return self._current_events.get(detector)
+
+    @property
+    def rule_names(self) -> list[str]:
+        """Names of the rules currently armed."""
+        return [r.name for r in self._rules]
+
+    def apply_rule_configs(self, configs: list[AlertRuleConfig]) -> RuleSyncResult:
+        """
+        Replace the active ruleset with `configs`, reusing unchanged rules.
+
+        Reuse is not an optimisation. A Rule carries its duration timers and
+        cooldown in RuleState, so rebuilding one resets them - a rule requiring
+        10s of low respiration would restart its clock on every sync and could
+        never fire, and a rebuilt rule forgets it is in cooldown and re-alarms.
+        Only rules whose config actually differs are rebuilt.
+        """
+        desired: dict[str, AlertRuleConfig] = {}
+        for cfg in configs:
+            if cfg.name in desired:
+                logger.warning(
+                    f"Duplicate alert rule name '{cfg.name}' - keeping the last one. "
+                    f"Rule names must be unique; the dashboard keys on them."
+                )
+            desired[cfg.name] = cfg
+
+        existing = {rule.name: rule for rule in self._rules}
+        result = RuleSyncResult()
+        rebuilt: list[Rule] = []
+
+        for name, cfg in desired.items():
+            current = existing.get(name)
+            if current is None:
+                rebuilt.append(Rule.from_config(cfg))
+                result.added.append(name)
+            elif (
+                current.source_config is not None
+                and current.source_config.model_dump() == cfg.model_dump()
+            ):
+                rebuilt.append(current)
+                result.unchanged.append(name)
+            else:
+                rebuilt.append(Rule.from_config(cfg))
+                result.updated.append(name)
+
+        result.removed = [name for name in existing if name not in desired]
+
+        self._rules = rebuilt
+
+        if result.changed:
+            logger.info(f"Alert rules synced: {result.describe()}")
+        if not self._rules:
+            logger.warning(
+                "Alert engine now has NO rules - no threshold alert can fire."
+            )
+
+        return result
 
     def add_rule(self, rule: Rule) -> None:
         """Add a new rule."""
