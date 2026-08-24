@@ -6,7 +6,7 @@
 #   ./bin/flash-sd /dev/sdX
 #
 # What it does:
-#   1. Flashes Raspberry Pi OS Lite (64-bit, Bookworm) to the SD card
+#   1. Flashes Raspberry Pi OS Lite (64-bit, Bookworm 2025-05-13) to the SD card
 #   2. Enables SSH for headless boot
 #   3. Sets default credentials (pi/nightwatch)
 #   4. Pre-installs hotspot packages (hostapd, dnsmasq, avahi) for offline setup
@@ -24,9 +24,18 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Pi OS image settings (same as VM setup)
-PI_OS_VERSION="2024-03-15"
+PI_OS_VERSION="2025-05-13"
 PI_OS_URL="https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-${PI_OS_VERSION}/${PI_OS_VERSION}-raspios-bookworm-arm64-lite.img.xz"
-CACHED_IMAGE="${PROJECT_ROOT}/.pi-vm/pi-os.img.xz"
+# Cache filename carries the version. An unversioned cache silently defeats any
+# bump of PI_OS_VERSION — the variable says one thing and the flash does another.
+CACHED_IMAGE="${PROJECT_ROOT}/.pi-vm/pi-os-${PI_OS_VERSION}.img.xz"
+LEGACY_CACHED_IMAGE="${PROJECT_ROOT}/.pi-vm/pi-os.img.xz"
+
+# WiFi regulatory domain. Raspberry Pi OS keeps the WLAN radio rfkill-blocked
+# until a country is set, so without this a flashed card boots with WiFi dead and
+# no way in except ethernet. Raspberry Pi Imager normally writes this; we are not
+# using the Imager, so we must.
+WIFI_COUNTRY="${WIFI_COUNTRY:-US}"
 
 # Default credentials
 PI_USER="pi"
@@ -69,11 +78,22 @@ check_dependencies() {
 }
 
 usage() {
-    echo "Usage: $0 <device>"
+    echo "Usage: $0 <device> [--wifi SSID:PASSWORD] [--restore DIR]"
+    echo ""
+    echo "  --wifi SSID:PASSWORD   Join this network on first boot, no ethernet needed."
+    echo "  --restore DIR          Restore a saved /etc/nightwatch (certs, config.yaml,"
+    echo "                         convex.env, wifi.conf). Keeps the existing CA so"
+    echo "                         devices do not have to re-trust the dashboard, and"
+    echo "                         the Convex admin key so deploys keep working."
+    echo "                         WiFi credentials are taken from its wifi.conf when"
+    echo "                         --wifi is not given."
+    echo ""
+    echo "Environment: WIFI_COUNTRY (default US), WIFI_SSID, WIFI_PSK, RESTORE_DIR"
     echo ""
     echo "Examples:"
     echo "  $0 /dev/sdb"
-    echo "  $0 /dev/mmcblk0"
+    echo "  $0 /dev/sdb --wifi MyNetwork:hunter2"
+    echo "  $0 /dev/sdb --restore ~/backups/nightwatch-pi/etc-nightwatch"
     echo ""
     echo "Use 'lsblk' to find your SD card device."
     exit 1
@@ -83,9 +103,48 @@ usage() {
 
 check_dependencies
 
-DEVICE="${1:-}"
+DEVICE=""
+WIFI_SSID="${WIFI_SSID:-}"
+WIFI_PSK="${WIFI_PSK:-}"
+RESTORE_DIR="${RESTORE_DIR:-}"
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --wifi)
+            [ $# -ge 2 ] || { log_error "--wifi needs SSID:PASSWORD"; usage; }
+            WIFI_SSID="${2%%:*}"
+            WIFI_PSK="${2#*:}"
+            if [ "$WIFI_SSID" = "$2" ] || [ -z "$WIFI_SSID" ] || [ -z "$WIFI_PSK" ]; then
+                log_error "--wifi must be SSID:PASSWORD"
+                exit 1
+            fi
+            shift 2
+            ;;
+        --restore)
+            [ $# -ge 2 ] || { log_error "--restore needs a directory"; usage; }
+            RESTORE_DIR="$2"
+            shift 2
+            ;;
+        -h|--help) usage ;;
+        -*) log_error "Unknown option: $1"; usage ;;
+        *) DEVICE="$1"; shift ;;
+    esac
+done
+
 if [ -z "$DEVICE" ]; then
     usage
+fi
+
+if [ -n "$RESTORE_DIR" ] && [ ! -d "$RESTORE_DIR" ]; then
+    log_error "--restore directory does not exist: $RESTORE_DIR"
+    exit 1
+fi
+
+# Fall back to the credentials in a restored wifi.conf so one flag does both.
+if [ -z "$WIFI_SSID" ] && [ -n "$RESTORE_DIR" ] && [ -r "${RESTORE_DIR}/wifi.conf" ]; then
+    WIFI_SSID=$(sed -n 's/^ssid=//p' "${RESTORE_DIR}/wifi.conf" | head -1)
+    WIFI_PSK=$(sed -n 's/^password=//p' "${RESTORE_DIR}/wifi.conf" | head -1)
+    [ -n "$WIFI_SSID" ] && log_info "WiFi credentials taken from ${RESTORE_DIR}/wifi.conf"
 fi
 
 if [ ! -b "$DEVICE" ]; then
@@ -93,13 +152,32 @@ if [ ! -b "$DEVICE" ]; then
     exit 1
 fi
 
-# Safety: refuse to write to NVMe or primary disk
+# Safety: refuse to write to the running system disk.
+# Derive it rather than hardcoding — root is not always /dev/sda.
+ROOT_SRC=$(findmnt -no SOURCE / 2>/dev/null || true)
+ROOT_DISK=$(lsblk -no PKNAME "$ROOT_SRC" 2>/dev/null | head -1)
+if [ -n "$ROOT_DISK" ] && [ "$DEVICE" = "/dev/${ROOT_DISK}" ]; then
+    log_error "Refusing to write to $DEVICE — it holds the running root filesystem!"
+    exit 1
+fi
+
 case "$DEVICE" in
-    /dev/nvme*|/dev/sda)
-        log_error "Refusing to write to $DEVICE — that looks like your system disk!"
+    /dev/nvme*)
+        log_error "Refusing to write to $DEVICE — that looks like an internal system disk!"
         exit 1
         ;;
 esac
+
+# Refuse fixed disks outright. An SD card in a reader always reports removable=1,
+# so this blocks every internal drive without needing to enumerate them.
+DEV_BASE=$(basename "$DEVICE")
+if [ "$(cat "/sys/block/${DEV_BASE}/removable" 2>/dev/null || echo 1)" = "0" ]; then
+    log_error "Refusing to write to $DEVICE — the kernel reports it as non-removable."
+    log_error "SD cards report removable=1. Check 'lsblk -o NAME,SIZE,RM,MODEL'."
+    log_error "To override deliberately: FLASH_SD_ALLOW_FIXED=1 $0 $DEVICE"
+    [ "${FLASH_SD_ALLOW_FIXED:-0}" = "1" ] || exit 1
+    log_warn "FLASH_SD_ALLOW_FIXED=1 set — proceeding against a fixed disk."
+fi
 
 # Show what we're about to destroy
 echo ""
@@ -160,19 +238,44 @@ log_info "All partitions unmounted"
 
 log_step "Preparing Raspberry Pi OS Lite image..."
 
-IMAGE_SOURCE=""
-if [ -f "$CACHED_IMAGE" ]; then
-    log_info "Using cached image: $CACHED_IMAGE"
-    IMAGE_SOURCE="$CACHED_IMAGE"
-else
-    log_info "Downloading Raspberry Pi OS Lite..."
-    DOWNLOAD_PATH="/tmp/raspios-lite-arm64.img.xz"
-    wget -O "$DOWNLOAD_PATH" "$PI_OS_URL" || {
+# Warn loudly if an old unversioned cache is lying around — it is NOT used.
+if [ -f "$LEGACY_CACHED_IMAGE" ]; then
+    log_warn "Ignoring unversioned cache $LEGACY_CACHED_IMAGE (version unknown)."
+    log_warn "Delete it once you are sure nothing else needs it."
+fi
+
+if [ ! -f "$CACHED_IMAGE" ]; then
+    log_info "Downloading Raspberry Pi OS Lite ${PI_OS_VERSION}..."
+    mkdir -p "$(dirname "$CACHED_IMAGE")"
+    wget -O "${CACHED_IMAGE}.part" "$PI_OS_URL" || {
         log_error "Download failed"
+        rm -f "${CACHED_IMAGE}.part"
         exit 1
     }
-    IMAGE_SOURCE="$DOWNLOAD_PATH"
+    mv "${CACHED_IMAGE}.part" "$CACHED_IMAGE"
 fi
+
+log_info "Using image: $CACHED_IMAGE"
+
+# Verify against the checksum Raspberry Pi publishes alongside the image.
+# Flashing a corrupt image produces a Pi that fails in confusing ways hours later.
+log_step "Verifying image checksum..."
+EXPECTED_SHA=$(wget -qO- "${PI_OS_URL}.sha256" | awk '{print $1}')
+if [ -z "$EXPECTED_SHA" ]; then
+    log_warn "Could not fetch published checksum (offline?) — skipping verification."
+else
+    ACTUAL_SHA=$(sha256sum "$CACHED_IMAGE" | awk '{print $1}')
+    if [ "$EXPECTED_SHA" != "$ACTUAL_SHA" ]; then
+        log_error "Checksum MISMATCH for $CACHED_IMAGE"
+        log_error "  expected: $EXPECTED_SHA"
+        log_error "  actual:   $ACTUAL_SHA"
+        log_error "Refusing to flash. Delete the cached file and re-run to re-download."
+        exit 1
+    fi
+    log_info "Checksum verified (sha256 ${ACTUAL_SHA:0:16}...)"
+fi
+
+IMAGE_SOURCE="$CACHED_IMAGE"
 
 # --- Step 3: Flash ---
 
@@ -221,6 +324,20 @@ log_info "SSH enabled"
 # Set default credentials
 echo "${PI_USER}:${PI_PASS_HASH}" | sudo tee "$BOOT_MNT/userconf.txt" > /dev/null
 log_info "User configured (${PI_USER}:${PI_PASS})"
+
+# Set the WiFi country in the kernel command line, exactly as
+# `raspi-config nonint do_wifi_country` does. Setting it before the first boot
+# means the regulatory domain is known at kernel init and the radio is never
+# blocked, so there is no chicken-and-egg where fixing WiFi requires WiFi.
+if [ -f "$BOOT_MNT/cmdline.txt" ]; then
+    sudo sed -i \
+        -e "s/\s*cfg80211.ieee80211_regdom=\S*//" \
+        -e "s/\(.*\)/\1 cfg80211.ieee80211_regdom=${WIFI_COUNTRY}/" \
+        "$BOOT_MNT/cmdline.txt"
+    log_info "WiFi country set to ${WIFI_COUNTRY} (radio would stay rfkill-blocked without it)"
+else
+    log_warn "No cmdline.txt on the boot partition - WiFi may come up rfkill-blocked."
+fi
 
 # Set hostname to nightwatch (so it broadcasts nightwatch.local via mDNS)
 echo "nightwatch" | sudo tee "$ROOT_MNT/etc/hostname" > /dev/null
@@ -298,6 +415,78 @@ sudo rsync -a --info=progress2 \
 sudo chown -R 1000:1000 "$DEST"
 
 log_info "Project copied to /home/pi/nightwatch"
+
+# --- Step 7b: Preseed WiFi and restore saved configuration ---
+# Both happen here: after the chroot created the nightwatch user and
+# /etc/nightwatch, and BEFORE the venv install copies in a default config.yaml
+# (it is guarded by `if [ ! -f ]`, so a restored file survives).
+
+NW_UID=$(awk -F: '$1=="nightwatch"{print $3}' "$ROOT_MNT/etc/passwd")
+NW_GID=$(awk -F: '$1=="nightwatch"{print $4}' "$ROOT_MNT/etc/passwd")
+
+if [ -n "$WIFI_SSID" ]; then
+    log_step "Preseeding WiFi network '${WIFI_SSID}'..."
+    # A NetworkManager profile brings the network up at boot, independent of the
+    # nightwatch service. If the app fails to start there is still SSH.
+    nm_dir="$ROOT_MNT/etc/NetworkManager/system-connections"
+    sudo mkdir -p "$nm_dir"
+    uuid=$(cat /proc/sys/kernel/random/uuid)
+    sudo tee "${nm_dir}/${WIFI_SSID}.nmconnection" > /dev/null <<NMEOF
+[connection]
+id=${WIFI_SSID}
+uuid=${uuid}
+type=wifi
+autoconnect=true
+autoconnect-priority=100
+
+[wifi]
+mode=infrastructure
+ssid=${WIFI_SSID}
+
+[wifi-security]
+key-mgmt=wpa-psk
+psk=${WIFI_PSK}
+
+[ipv4]
+method=auto
+
+[ipv6]
+method=auto
+addr-gen-mode=default
+NMEOF
+    sudo chown root:root "${nm_dir}/${WIFI_SSID}.nmconnection"
+    sudo chmod 600 "${nm_dir}/${WIFI_SSID}.nmconnection"
+    log_info "WiFi profile written - the card will join '${WIFI_SSID}' with no ethernet"
+else
+    log_warn "No WiFi credentials given (--wifi). The card will boot into hotspot"
+    log_warn "setup mode, which needs a phone or ethernet to complete."
+fi
+
+if [ -n "$RESTORE_DIR" ]; then
+    log_step "Restoring configuration from ${RESTORE_DIR}..."
+    sudo mkdir -p "$ROOT_MNT/etc/nightwatch"
+    for f in config.yaml convex.env wifi.conf .configured; do
+        [ -e "${RESTORE_DIR}/${f}" ] && sudo cp "${RESTORE_DIR}/${f}" "$ROOT_MNT/etc/nightwatch/${f}"
+    done
+    [ -d "${RESTORE_DIR}/certs" ] && sudo cp -a "${RESTORE_DIR}/certs" "$ROOT_MNT/etc/nightwatch/"
+
+    # Permissions mirror install.sh: config readable by the service group,
+    # certs owned by the service account. Run the globs as root - they expand in
+    # the calling shell, which cannot read a 750 root-owned directory.
+    sudo chown -R "root:${NW_GID}" "$ROOT_MNT/etc/nightwatch"
+    sudo chmod 750 "$ROOT_MNT/etc/nightwatch"
+    sudo sh -c "
+        chmod 640 '$ROOT_MNT'/etc/nightwatch/config.yaml '$ROOT_MNT'/etc/nightwatch/convex.env \
+                  '$ROOT_MNT'/etc/nightwatch/wifi.conf '$ROOT_MNT'/etc/nightwatch/.configured 2>/dev/null
+        if [ -d '$ROOT_MNT/etc/nightwatch/certs' ]; then
+            chmod 750 '$ROOT_MNT'/etc/nightwatch/certs
+            chown ${NW_UID}:${NW_GID} '$ROOT_MNT'/etc/nightwatch/certs/*
+            chmod 600 '$ROOT_MNT'/etc/nightwatch/certs/*.key* 2>/dev/null
+            chmod 644 '$ROOT_MNT'/etc/nightwatch/certs/*.crt* 2>/dev/null
+        fi
+    "
+    log_info "Configuration restored (existing CA and Convex admin key preserved)"
+fi
 
 # --- Step 8: Install nightwatch Python package ---
 
@@ -380,9 +569,18 @@ AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE
 WantedBy=multi-user.target
 EOF
 
-# Create dnsmasq lease file with correct ownership
+# Create dnsmasq lease file owned by the nightwatch service account.
+# Read the ids out of the image rather than hardcoding — useradd --system picks
+# from a descending range, so the nightwatch uid/gid are not stable across builds.
+NW_UID=$(awk -F: '$1=="nightwatch"{print $3}' "$ROOT_MNT/etc/passwd")
+NW_GID=$(awk -F: '$1=="nightwatch"{print $4}' "$ROOT_MNT/etc/passwd")
+if [ -z "$NW_UID" ] || [ -z "$NW_GID" ]; then
+    log_error "nightwatch user missing from the image — the chroot stage did not complete."
+    exit 1
+fi
 sudo touch "$ROOT_MNT/var/lib/misc/dnsmasq.leases"
-sudo chown 1001:1001 "$ROOT_MNT/var/lib/misc/dnsmasq.leases"  # nightwatch user
+sudo chown "${NW_UID}:${NW_GID}" "$ROOT_MNT/var/lib/misc/dnsmasq.leases"
+log_info "dnsmasq lease file owned by nightwatch (${NW_UID}:${NW_GID})"
 
 # Enable nightwatch service
 sudo mkdir -p "$ROOT_MNT/etc/systemd/system/multi-user.target.wants"

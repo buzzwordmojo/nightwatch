@@ -18,10 +18,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 VM_DIR="${PROJECT_ROOT}/.pi-vm"
 
-# Pi OS image settings
-PI_OS_VERSION="2024-03-15"
+# Pi OS image settings — keep in step with bin/flash-sd
+PI_OS_VERSION="2025-05-13"
 PI_OS_URL="https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-${PI_OS_VERSION}/${PI_OS_VERSION}-raspios-bookworm-arm64-lite.img.xz"
 IMAGE_NAME="pi-os.img"
+# Records which PI_OS_VERSION the working image was built from, so a version
+# bump rebuilds instead of silently reusing a stale disk.
+VERSION_STAMP="${VM_DIR}/.pi-os-version"
 IMAGE_SIZE="4G"
 
 # Default credentials
@@ -80,18 +83,26 @@ check_dependencies() {
 
 download_image() {
     local image_path="${VM_DIR}/${IMAGE_NAME}"
-    local compressed_path="${VM_DIR}/pi-os.img.xz"
+    # Version-aware cache: an unversioned name silently defeats a PI_OS_VERSION bump.
+    local compressed_path="${VM_DIR}/pi-os-${PI_OS_VERSION}.img.xz"
+    local stamped_version=""
+    [ -f "$VERSION_STAMP" ] && stamped_version=$(cat "$VERSION_STAMP")
 
     if [ -f "$image_path" ] && [ "$FORCE" != "true" ]; then
-        log_info "Image already exists: $image_path"
-        return 0
+        if [ "$stamped_version" = "$PI_OS_VERSION" ]; then
+            log_info "Image already exists: $image_path (${PI_OS_VERSION})"
+            return 0
+        fi
+        log_warn "Existing image was built from '${stamped_version:-unknown}', want ${PI_OS_VERSION}."
+        log_warn "Rebuilding. Re-run with --force to skip this check."
+        rm -f "$image_path"
     fi
 
-    log_info "Downloading Raspberry Pi OS..."
+    log_info "Downloading Raspberry Pi OS ${PI_OS_VERSION}..."
     mkdir -p "$VM_DIR"
 
     if [ -f "$compressed_path" ] && [ "$FORCE" != "true" ]; then
-        log_info "Using cached compressed image"
+        log_info "Using cached compressed image (${PI_OS_VERSION})"
     else
         wget -O "$compressed_path" "$PI_OS_URL" || {
             log_error "Failed to download Pi OS image"
@@ -110,7 +121,9 @@ download_image() {
     log_info "Resizing image to $IMAGE_SIZE..."
     qemu-img resize "$image_path" "$IMAGE_SIZE"
 
-    log_info "Image ready: $image_path"
+    echo "$PI_OS_VERSION" > "$VERSION_STAMP"
+
+    log_info "Image ready: $image_path (${PI_OS_VERSION})"
 }
 
 extract_kernel() {
