@@ -339,6 +339,39 @@ else
     log_warn "No cmdline.txt on the boot partition - WiFi may come up rfkill-blocked."
 fi
 
+# Two further things keep WiFi dead on a stock image, and the regulatory domain
+# above fixes neither. Both were found the hard way on a card that booted with
+# the country correctly set and the radio still down.
+#
+# 1. brcmfmac registers its rfkill killswitch soft-blocked, and systemd-rfkill
+#    then persists that. raspi-config clears it by writing 0 into
+#    /var/lib/systemd/rfkill/*:wlan - but that file does not exist until a boot
+#    has created it, so there is nothing to pre-write here. A udev rule keyed on
+#    the rfkill type instead fires exactly when the device appears, with no
+#    startup ordering race and no dependence on the platform path (which differs
+#    between Pi models).
+sudo mkdir -p "$ROOT_MNT/etc/udev/rules.d"
+sudo tee "$ROOT_MNT/etc/udev/rules.d/90-wifi-unblock.rules" > /dev/null <<'UDEVEOF'
+# Unblock the WiFi radio as soon as its rfkill switch is registered.
+# Without this a freshly flashed card boots with the radio soft-blocked and no
+# way in except ethernet. Keyed on type rather than a platform path so it holds
+# across Pi models.
+ACTION=="add", SUBSYSTEM=="rfkill", ATTR{type}=="wlan", ATTR{soft}="0"
+UDEVEOF
+log_info "WiFi rfkill unblock rule installed"
+
+# 2. Raspberry Pi OS ships /var/lib/NetworkManager/NetworkManager.state with
+#    WirelessEnabled=false. That is independent of rfkill and survives
+#    unblocking the radio - nmcli reports WIFI-HW enabled but WIFI disabled.
+sudo mkdir -p "$ROOT_MNT/var/lib/NetworkManager"
+sudo tee "$ROOT_MNT/var/lib/NetworkManager/NetworkManager.state" > /dev/null <<'NMSTATEEOF'
+[main]
+NetworkingEnabled=true
+WirelessEnabled=true
+WWANEnabled=true
+NMSTATEEOF
+log_info "NetworkManager wireless enabled in persisted state"
+
 # Set hostname to nightwatch (so it broadcasts nightwatch.local via mDNS)
 echo "nightwatch" | sudo tee "$ROOT_MNT/etc/hostname" > /dev/null
 sudo sed -i 's/127\.0\.1\.1.*raspberrypi/127.0.1.1\tnightwatch/' "$ROOT_MNT/etc/hosts"
