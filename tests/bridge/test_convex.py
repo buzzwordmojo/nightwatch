@@ -238,6 +238,9 @@ class TestConvexBridgeReadings:
         return ConvexBridge(ConvexConfig())
 
     def test_add_reading_radar(self, bridge):
+        # Collection is gated on presence; these tests model a detector
+        # reporting while someone is in the room.
+        bridge._last_present_at = time.time()
         """Radar event extracts respiration rate."""
         event = Event(
             detector="radar",
@@ -255,6 +258,9 @@ class TestConvexBridgeReadings:
         assert bridge._pending_readings[0]["respirationRate"] == 14.0
 
     def test_add_reading_audio(self, bridge):
+        # Collection is gated on presence; these tests model a detector
+        # reporting while someone is in the room.
+        bridge._last_present_at = time.time()
         """Audio event extracts breathing rate and amplitude."""
         event = Event(
             detector="audio",
@@ -565,6 +571,7 @@ class TestConvexBridgeEdgeCases:
 
     @pytest.mark.asyncio
     async def test_multiple_events_batch(self, bridge):
+        bridge._last_present_at = time.time()  # collection gated on presence
         """Multiple events batch before flush."""
         await bridge.start()
 
@@ -639,3 +646,73 @@ class TestMockDataNeverPersisted:
             value={"heart_rate": 62.0, "bed_occupied": True},
         ))
         assert bridge._pending_readings == [], "mock vitals reached the readings batch"
+
+
+class TestCollectionGatedOnPresence:
+    """
+    Vitals history is written only while someone is present, plus a linger.
+
+    An empty room produces placeholder rates and absence rows; a night of that
+    is noise in the child's history and write wear on the SD card. Alerting is
+    unaffected - it runs off the event bus, not this bridge.
+    """
+
+    def _event(self, detector="radar", **value):
+        import time
+
+        from nightwatch.core.events import Event, EventState
+
+        return Event(detector=detector, timestamp=time.time(), confidence=0.9,
+                     state=EventState.NORMAL, value=value)
+
+    def _bridge(self, monkeypatch, now):
+        import nightwatch.bridge.convex as mod
+
+        monkeypatch.setattr(mod.time, "time", lambda: now[0])
+        return mod.ConvexBridge(mock_detectors={"bcg"})
+
+    def test_nothing_collected_before_first_presence(self, monkeypatch):
+        now = [1000.0]
+        b = self._bridge(monkeypatch, now)
+        b._add_reading(self._event(respiration_rate=18.0, presence=False))
+        assert b._pending_readings == []
+
+    def test_presence_opens_collection(self, monkeypatch):
+        now = [1000.0]
+        b = self._bridge(monkeypatch, now)
+        b._add_reading(self._event(respiration_rate=18.0, presence=True))
+        assert len(b._pending_readings) == 1
+
+    def test_collection_lingers_after_departure(self, monkeypatch):
+        import nightwatch.bridge.convex as mod
+
+        now = [1000.0]
+        b = self._bridge(monkeypatch, now)
+        b._add_reading(self._event(respiration_rate=18.0, presence=True))
+        now[0] += mod.PRESENCE_LINGER_SECONDS - 5
+        b._add_reading(self._event(respiration_rate=17.0, presence=False))
+        assert len(b._pending_readings) == 2, "linger window should still collect"
+
+    def test_collection_stops_after_linger_expires(self, monkeypatch):
+        import nightwatch.bridge.convex as mod
+
+        now = [1000.0]
+        b = self._bridge(monkeypatch, now)
+        b._add_reading(self._event(respiration_rate=18.0, presence=True))
+        now[0] += mod.PRESENCE_LINGER_SECONDS + 5
+        b._add_reading(self._event(respiration_rate=17.0, presence=False))
+        assert len(b._pending_readings) == 1, "collection should stop after the linger"
+
+    def test_mock_presence_does_not_arm_collection(self, monkeypatch):
+        now = [1000.0]
+        b = self._bridge(monkeypatch, now)
+        # The mock BCG always reports the bed occupied; that must not count.
+        b._add_reading(self._event(detector="bcg", bed_occupied=True))
+        b._add_reading(self._event(respiration_rate=18.0, presence=False))
+        assert b._pending_readings == []
+
+    def test_null_respiration_is_not_written(self, monkeypatch):
+        now = [1000.0]
+        b = self._bridge(monkeypatch, now)
+        b._add_reading(self._event(respiration_rate=None, presence=True))
+        assert all("respirationRate" not in r for r in b._pending_readings)

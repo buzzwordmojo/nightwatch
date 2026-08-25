@@ -21,6 +21,12 @@ from nightwatch.core.events import Event, EventState
 logger = logging.getLogger(__name__)
 
 
+# How long collection continues after presence is lost. A bathroom trip or a
+# parent stepping out should not fragment the night into separate sessions,
+# and the transition itself (occupied -> empty) is worth capturing.
+PRESENCE_LINGER_SECONDS = 600.0
+
+
 class ConvexUnavailableError(RuntimeError):
     """Convex could not be reached. Distinct from Convex answering with no data."""
 
@@ -77,6 +83,14 @@ class ConvexBridge:
         # for status dots; the live feel comes from the waveform socket, and
         # vitals history from the readings table, neither of which changes.
         self._detector_update_interval = 5.0
+
+        # Collection gate: vitals history is only written while someone is
+        # present, plus a linger window after they leave. An empty room
+        # produces placeholder rates and absence rows - storing a night of
+        # nulls is noise in the child's history and wear on the SD card.
+        # Live UI, waveforms and ALERTING are unaffected; this gates only
+        # what is persisted.
+        self._last_present_at = 0.0
 
         # Backoff state
         self._consecutive_failures = 0
@@ -270,16 +284,35 @@ class ConvexBridge:
             "value": event.value,
         }
 
+    def _note_presence(self, event: Event) -> None:
+        """Track when a real (non-mock) detector last saw a person."""
+        present = None
+        if event.detector == "radar":
+            present = event.value.get("presence")
+        elif event.detector == "fusion.presence":
+            present = event.value.get("value")
+        elif event.detector == "bcg":
+            present = event.value.get("bed_occupied")
+        if present:
+            self._last_present_at = time.time()
+
+    def _is_collecting(self) -> bool:
+        return (time.time() - self._last_present_at) < PRESENCE_LINGER_SECONDS
+
     def _add_reading(self, event: Event) -> None:
         """Add event data to readings batch."""
         if event.detector in self._mock_detectors:
+            return
+
+        self._note_presence(event)
+        if not self._is_collecting():
             return
 
         reading: dict[str, Any] = {}
 
         # Extract relevant values based on detector type
         if event.detector == "radar":
-            if "respiration_rate" in event.value:
+            if event.value.get("respiration_rate") is not None:
                 reading["respirationRate"] = event.value["respiration_rate"]
             # The LD2450 had no real heart rate - only a weak inference from
             # position jitter - so radar HR was deliberately not stored. The
