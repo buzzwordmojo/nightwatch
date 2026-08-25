@@ -10,8 +10,8 @@
     --card-foreground: 210 40% 98%;
     --popover: 222.2 84% 6%;
     --popover-foreground: 210 40% 98%;
-    --primary: 217.2 91.2% 59.8%;
-    --primary-foreground: 222.2 47.4% 11.2%;
+    --primary: 262.1 83.3% 57.8%;      /* KW purple-600 #7C3AED */
+    --primary-foreground: 0 0% 100%;   /* --text-on-accent */
     --secondary: 217.2 32.6% 17.5%;
     --secondary-foreground: 210 40% 98%;
     --muted: 217.2 32.6% 17.5%;
@@ -22,14 +22,44 @@
     --destructive-foreground: 210 40% 98%;
     --border: 217.2 32.6% 17.5%;
     --input: 217.2 32.6% 17.5%;
-    --ring: 224.3 76.3% 48%;
+    --ring: 263.4 69.3% 42.2%;         /* KW purple-800 #5B21B6 focus ring */
     --radius: 0.5rem;
 
     /* Nightwatch custom */
     --success: 142.1 76.2% 36.3%;
     --warning: 47.9 95.8% 53.1%;
     --danger: 0 84.2% 60.2%;
+
+    /* KnightWatcher brand + status tokens (design-system/tokens) */
+    --brand-purple: #5B21B6;
+    --brand-yellow: #FACC15;
+    --accent-hover: 258.3 89.5% 66.3%;      /* purple-500 */
+    --status-simulated: 187.9 85.7% 53.3%;  /* cyan-400 */
+    --fill-normal: rgba(22, 163, 74, 0.10);
+    --fill-warning: rgba(250, 204, 21, 0.10);
+    --fill-critical: rgba(239, 68, 68, 0.10);
+    --fill-accent: rgba(124, 58, 237, 0.12);
+    --border-normal: rgba(22, 163, 74, 0.50);
+    --border-warning: rgba(250, 204, 21, 0.50);
+    --border-critical: rgba(239, 68, 68, 0.50);
+    --glow-normal: 0 0 20px 5px rgba(22, 163, 74, 0.5);
+    --glow-normal-rest: 0 0 5px 0 rgba(22, 163, 74, 0.3);
   }
+}
+
+/* KnightWatcher motion (design-system/tokens/motion.css) */
+@keyframes kw-breathe {
+  0%, 100% { transform: scale(1); opacity: 0.8; }
+  50% { transform: scale(1.05); opacity: 1; }
+}
+@keyframes kw-pulse-ring {
+  0% { transform: scale(0.95); opacity: 1; }
+  50% { transform: scale(1); opacity: 0.5; }
+  100% { transform: scale(0.95); opacity: 1; }
+}
+@keyframes kw-breathing-glow {
+  0%, 100% { box-shadow: var(--glow-normal-rest); }
+  50% { box-shadow: var(--glow-normal); }
 }
 
 @layer base {

@@ -1,10 +1,12 @@
 "use client";
 
-import { ReactNode } from "react";
+import { ReactNode, useState } from "react";
 import { VitalCard } from "@/components/dashboard/VitalCard";
 import { StatusIndicator } from "@/components/dashboard/StatusIndicator";
 import { AlertBanner } from "@/components/dashboard/AlertBanner";
 import { VitalsChart } from "@/components/dashboard/VitalsChart";
+import { WaveformChart } from "@/components/dashboard/WaveformChart";
+import { Logo } from "@/components/brand/Logo";
 import { AudioLevelMeter } from "@/components/dashboard/AudioLevelMeter";
 import { SensorStatusBar } from "@/components/dashboard/SensorStatusBar";
 import { Heart, Wind, Activity, Moon, Settings, Volume2, VolumeX } from "lucide-react";
@@ -49,6 +51,7 @@ export function DashboardView({
   headerExtra,
   showDetectorStatus = true,
 }: DashboardViewProps) {
+  const [chartView, setChartView] = useState<"realtime" | "historical">("realtime");
   const isLoading = vitals === undefined;
   const { isListening, toggle: toggleAudio } = useAudioMonitor();
   const updateSettings = useQuery(api.settings.getUpdateSettings);
@@ -75,9 +78,11 @@ export function DashboardView({
       {/* Header */}
       <header className="flex items-center justify-between mb-8">
         <div className="flex items-center gap-3">
-          <Moon className="h-8 w-8 text-primary" />
           <div>
-            <h1 className="text-2xl font-bold">Nightwatch {updateSettings?.current_commit && <span className="text-xs text-muted-foreground font-mono">{updateSettings.current_commit}</span>}</h1>
+            <h1 className="text-2xl font-bold">
+              <Logo size={34} />
+              {updateSettings?.current_commit && <span className="ml-2 align-middle text-xs text-muted-foreground font-mono">{updateSettings.current_commit}</span>}
+            </h1>
             <p className="text-sm text-muted-foreground">
               {vitals
                 ? `Last update: ${formatTime(vitals.timestamp)}`
@@ -182,9 +187,40 @@ export function DashboardView({
         </MockBadgeWrapper>
       </div>
 
-      {/* Chart */}
+      {/* Chart: live waveforms (WebSocket, never stored) vs stored history (Convex) */}
       <div className="rounded-lg border bg-card p-6">
-        <VitalsChart data={readings ?? []} />
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+            {chartView === "realtime" ? "Live waveforms" : "History"}
+          </h2>
+          <div className="flex rounded-md border p-0.5 text-xs font-medium">
+            <button
+              onClick={() => setChartView("realtime")}
+              className={`rounded px-3 py-1 transition-colors ${
+                chartView === "realtime"
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Realtime
+            </button>
+            <button
+              onClick={() => setChartView("historical")}
+              className={`rounded px-3 py-1 transition-colors ${
+                chartView === "historical"
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Historical
+            </button>
+          </div>
+        </div>
+        {chartView === "realtime" ? (
+          <WaveformChart />
+        ) : (
+          <VitalsChart data={readings ?? []} />
+        )}
       </div>
 
       {/* Audio Level Meter */}
