@@ -144,6 +144,39 @@ def test_target_frame_sets_presence():
     assert round(r.target_value, 2) == 85.68
 
 
+def test_still_person_with_streaming_vitals_is_present(monkeypatch):
+    """
+    The 0x0a16 flag is motion, not occupancy - a person sitting still reads
+    flag=0 while their vitals stream. Presence must follow the measurement
+    evidence, or a sleeping child reads as an empty bed.
+    """
+    import nightwatch.detectors.radar.ld6002 as mod
+
+    now = [1000.0]
+    monkeypatch.setattr(mod.time, "time", lambda: now[0])
+
+    r = LD6002Reading()
+    r.apply(LD6002Frame(1, TYPE_PHASE, struct.pack("<fff", 0.1, 1.2, -0.3)))
+    assert r.target_present is True, "phase frames are presence evidence"
+
+    now[0] += 5
+    r.apply(LD6002Frame(2, TYPE_HEART_RATE, struct.pack("<f", 68.0)))
+    assert r.target_present is True, "an in-range rate is presence evidence"
+
+
+def test_placeholder_rates_are_not_presence_evidence(monkeypatch):
+    """Empty-room 0.0 placeholders arrive at 50 Hz and must never read as a person."""
+    import nightwatch.detectors.radar.ld6002 as mod
+
+    now = [1000.0]
+    monkeypatch.setattr(mod.time, "time", lambda: now[0])
+
+    r = LD6002Reading()
+    for i in range(50):
+        r.apply(LD6002Frame(i, TYPE_RESPIRATION, struct.pack("<f", 0.0)))
+    assert r.target_present is False
+
+
 def test_presence_decays_when_target_frames_stop(monkeypatch):
     """
     With an empty room the module stops sending target frames entirely
@@ -185,3 +218,24 @@ def test_presence_gate_is_configurable(monkeypatch):
     now[0] += 6
     r2.apply(LD6002Frame(2, TYPE_RESPIRATION, struct.pack("<f", 0.0)))
     assert r2.target_present is True, "a 60s gate must not expire after 6s"
+
+
+def test_target_frames_without_lock_still_mean_occupied(monkeypatch):
+    """
+    A still person whose vitals lock dropped keeps 0x0a16 streaming with
+    flag=0; a truly empty room emits no target frames at all (both verified on
+    hardware). Occupancy follows frame ARRIVAL - a sleeping child who is hard
+    to measure must never read as an empty bed.
+    """
+    import nightwatch.detectors.radar.ld6002 as mod
+
+    now = [1000.0]
+    monkeypatch.setattr(mod.time, "time", lambda: now[0])
+
+    r = LD6002Reading()
+    r.apply(LD6002Frame(1, TYPE_TARGET, struct.pack("<i", 0) + struct.pack("<f", 85.0)))
+    assert r.target_present is True, "target frame arrival is occupancy evidence"
+    assert r.vitals_locked is False, "flag=0 means no vitals lock"
+
+    r.apply(LD6002Frame(2, TYPE_TARGET, struct.pack("<i", 1) + struct.pack("<f", 85.0)))
+    assert r.vitals_locked is True

@@ -506,6 +506,7 @@ class LD6002Detector(BaseDetector):
             "movement": round(movement, 2),
             "movement_is_macro": movement > self._config.movement_threshold,
             "presence": r.target_present,
+            "vitals_locked": r.vitals_locked,
             "target_distance": round(r.target_value, 2) if r.target_value is not None else None,
             # The LD6002 does not report bearing or position at all.
             "target_angle": None,

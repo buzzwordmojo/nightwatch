@@ -30,6 +30,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import struct
+import threading
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
@@ -125,15 +126,23 @@ class LD6002Reading:
     # When each rate was last confirmed by an in-range frame.
     respiration_updated_at: float = 0.0
     heart_rate_updated_at: float = 0.0
-    target_updated_at: float = 0.0
+    presence_evidence_at: float = 0.0
     presence_stale_seconds: float = PRESENCE_STALE_SECONDS
+    # Whether the module currently holds a vitals lock (phase + real rates
+    # flowing). Occupied-without-lock is the "present but unmeasurable" state
+    # that a caregiver should see as "someone is there" plus empty rate tiles.
+    vitals_locked: bool = False
+
+    def _note_presence_evidence(self, now: float) -> None:
+        self.presence_evidence_at = now
+        self.target_present = True
 
     def _expire_stale(self, now: float) -> None:
         if self.respiration_rate is not None and now - self.respiration_updated_at > RATE_STALE_SECONDS:
             self.respiration_rate = None
         if self.heart_rate is not None and now - self.heart_rate_updated_at > RATE_STALE_SECONDS:
             self.heart_rate = None
-        if self.target_present and now - self.target_updated_at > self.presence_stale_seconds:
+        if self.target_present and now - self.presence_evidence_at > self.presence_stale_seconds:
             self.target_present = False
 
     def apply(self, frame: LD6002Frame) -> None:
@@ -147,12 +156,19 @@ class LD6002Reading:
             self.waveform.append((now, total, resp, heart))
             if len(self.waveform) > WAVEFORM_MAX_SAMPLES:
                 del self.waveform[:-WAVEFORM_MAX_SAMPLES]
+            # Phase frames only exist while the module is measuring a chest -
+            # an empty room produces none at all (verified on hardware).
+            self._note_presence_evidence(now)
         elif t == TYPE_RESPIRATION:
             (v,) = frame.floats()
             lo, hi = RESPIRATION_BPM_RANGE
             if lo <= v <= hi:
                 self.respiration_rate = v
                 self.respiration_updated_at = now
+                # An in-range rate is a measurement of a person. The empty-room
+                # placeholders (0.0 at 50 Hz) never pass the range check, so
+                # they never count as presence.
+                self._note_presence_evidence(now)
             # else: keep the previous value; _expire_stale retires it in time
         elif t == TYPE_HEART_RATE:
             (v,) = frame.floats()
@@ -160,12 +176,20 @@ class LD6002Reading:
             if lo <= v <= hi:
                 self.heart_rate = v
                 self.heart_rate_updated_at = now
+                self._note_presence_evidence(now)
         elif t == TYPE_TARGET:
             flag = struct.unpack("<i", frame.payload[:4])[0]
             (val,) = struct.unpack("<f", frame.payload[4:])
-            self.target_present = bool(flag)
             self.target_value = val
-            self.target_updated_at = now
+            self.vitals_locked = bool(flag)
+            # The ARRIVAL of a target frame is occupancy evidence regardless of
+            # its flag. Verified on hardware: a truly empty room emits no
+            # 0x0a16 frames at all, while a still person whose vitals lock has
+            # dropped keeps them streaming at ~50/s with flag=0. This device
+            # watches someone sleep - stillness is the operating condition -
+            # so "body detected, vitals not locked" must read as occupied,
+            # never as an empty bed. The flag itself tracks vitals lock.
+            self._note_presence_evidence(now)
     def waveform_since(self, cursor: float) -> list[tuple[float, float, float, float]]:
         """Samples newer than `cursor`, so a client can stream incrementally."""
         if not self.waveform:
@@ -251,26 +275,61 @@ class LD6002Driver:
             return frame
 
     async def read_frames(self) -> AsyncIterator[LD6002Frame]:
-        """Yield frames until disconnected."""
+        """
+        Yield frames until disconnected.
+
+        Reading happens on a dedicated thread, not asyncio's shared default
+        executor. The shared pool is where other components park blocking
+        calls - the audio detector's device probing in particular - and when
+        it clogs, serial reads queue behind it. Measured consequence: the
+        module streams gaplessly (181/181 seconds in a 3-minute bench
+        capture) while the service's view of it went silent for 5+ seconds
+        at a time, long enough to flap presence on a perfectly steady
+        signal. A private thread makes the read path immune to everyone
+        else's blocking habits.
+        """
         if self._serial is None:
             raise RuntimeError("Not connected")
 
-        while self.is_connected:
-            try:
-                waiting = self._serial.in_waiting or 1
-                chunk = await asyncio.to_thread(self._serial.read, waiting)
-            except Exception as e:
-                logger.error("LD6002 read failed: %s", e)
-                raise
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue = asyncio.Queue()
+        stop = threading.Event()
 
-            if chunk:
-                self._buf += chunk
-                # Runaway guard: without a valid frame the buffer must not grow
-                # without bound.
+        def _deliver(item) -> None:
+            try:
+                queue.put_nowait(item)
+            except Exception:
+                pass
+
+        def _pump() -> None:
+            while not stop.is_set():
+                ser = self._serial
+                if ser is None or not ser.is_open:
+                    return
+                try:
+                    chunk = ser.read(4096)  # bounded by the serial timeout
+                except Exception as e:
+                    loop.call_soon_threadsafe(_deliver, e)
+                    return
+                if chunk:
+                    loop.call_soon_threadsafe(_deliver, bytes(chunk))
+
+        reader = threading.Thread(target=_pump, name="ld6002-reader", daemon=True)
+        reader.start()
+
+        try:
+            while self.is_connected:
+                item = await queue.get()
+                if isinstance(item, Exception):
+                    logger.error("LD6002 read failed: %s", item)
+                    raise item
+                self._buf += item
+                # Runaway guard: without a valid frame the buffer must not
+                # grow without bound.
                 if len(self._buf) > 8192:
                     logger.warning("LD6002 buffer overflow, resyncing")
                     del self._buf[:-1024]
                 while (frame := self._pop_frame()) is not None:
                     yield frame
-            else:
-                await asyncio.sleep(0.01)
+        finally:
+            stop.set()
