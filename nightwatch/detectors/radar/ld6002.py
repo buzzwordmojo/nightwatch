@@ -307,7 +307,17 @@ class LD6002Driver:
                 if ser is None or not ser.is_open:
                     return
                 try:
-                    chunk = ser.read(4096)  # bounded by the serial timeout
+                    # Block for the first byte, then drain whatever else has
+                    # arrived. A plain read(4096) would sit out its full
+                    # timeout collecting a second of frames and deliver them
+                    # as one burst - every sample in the burst then shares a
+                    # timestamp, which a time-axis renderer draws as vertical
+                    # spikes instead of a waveform.
+                    chunk = ser.read(1)
+                    if chunk:
+                        waiting = ser.in_waiting
+                        if waiting:
+                            chunk += ser.read(waiting)
                 except Exception as e:
                     loop.call_soon_threadsafe(_deliver, e)
                     return
