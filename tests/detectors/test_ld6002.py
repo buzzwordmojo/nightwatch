@@ -112,12 +112,29 @@ def test_ranges_reject_physiologically_impossible_values():
     assert r.respiration_rate is None
 
 
-def test_phase_history_is_bounded():
+def test_waveform_is_bounded():
+    """
+    50 Hz phase data is held in memory only and must not grow without bound.
+    These samples are deliberately never persisted - sustained writes at this
+    rate are what destroyed the previous SD card.
+    """
+    from nightwatch.detectors.radar.ld6002 import WAVEFORM_MAX_SAMPLES
+
     r = LD6002Reading()
-    for i in range(1200):
+    for i in range(WAVEFORM_MAX_SAMPLES + 400):
         r.apply(LD6002Frame(i, TYPE_PHASE, struct.pack("<fff", 0.0, float(i), 0.0)))
-    assert len(r.phase_history) == 500
-    assert r.phase_history[-1] == 1199.0
+    assert len(r.waveform) == WAVEFORM_MAX_SAMPLES
+    assert r.phase_history[-1] == float(WAVEFORM_MAX_SAMPLES + 399)
+
+
+def test_waveform_since_streams_incrementally():
+    """A client should be able to fetch only what it has not already seen."""
+    r = LD6002Reading()
+    for i in range(10):
+        r.apply(LD6002Frame(i, TYPE_PHASE, struct.pack("<fff", 0.0, float(i), 0.0)))
+    assert len(r.waveform_since(0)) == 10
+    cursor = r.waveform[4][0]
+    assert all(w[0] > cursor for w in r.waveform_since(cursor))
 
 
 def test_target_frame_sets_presence():

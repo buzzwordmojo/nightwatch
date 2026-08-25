@@ -216,6 +216,8 @@ class DashboardServer:
 
         # Live audio streaming
         self._app.websocket("/ws/audio")(self._audio_stream_endpoint)
+        self._app.websocket("/ws/waveform")(self._waveform_stream_endpoint)
+        self._app.get("/waveform", response_class=HTMLResponse)(self._get_waveform_page)
 
         # Serve Next.js static export pages
         self._app.get("/settings")(self._serve_nextjs_page)
@@ -2410,3 +2412,179 @@ class DashboardServer:
             ssl_keyfile=ssl_keyfile,
             ssl_certfile=ssl_certfile,
         )
+
+    # ========================================================================
+    # Vitals waveform (LD6002 phase traces)
+    # ========================================================================
+
+    async def _waveform_stream_endpoint(self, websocket: WebSocket) -> None:
+        """
+        Stream 50 Hz phase waveforms to a browser.
+
+        Deliberately a live socket rather than rows in Convex. At 50 Hz these
+        samples would dwarf every other write on the device, and sustained
+        writes to the SD card are what destroyed the previous one. Nothing here
+        is persisted; a client that was not watching simply missed it.
+        """
+        await websocket.accept()
+        detector = self._detectors.get("radar")
+        if detector is None or not hasattr(detector, "waveform_since"):
+            await websocket.send_json({
+                "error": "waveforms require the LD6002 radar (config: detectors.radar.model=ld6002)"
+            })
+            await websocket.close()
+            return
+
+        cursor = 0.0
+        try:
+            while True:
+                samples = detector.waveform_since(cursor)
+                if samples:
+                    cursor = samples[-1][0]
+                    await websocket.send_json({
+                        "samples": [
+                            {"t": round(t, 3), "total": round(a, 4),
+                             "resp": round(b, 4), "heart": round(c, 4)}
+                            for t, a, b, c in samples
+                        ],
+                        "vitals": {
+                            "respiration_rate": self._current_state.get("respiration_rate"),
+                            "heart_rate": self._current_state.get("heart_rate"),
+                            "movement": self._current_state.get("movement"),
+                            "presence": self._current_state.get("presence"),
+                        },
+                    })
+                # ~20 Hz of batches; each carries whatever accumulated.
+                await asyncio.sleep(0.05)
+        except WebSocketDisconnect:
+            pass
+        except Exception as e:
+            # This module has no module-level logger; other handlers build one
+            # locally. Referencing a global here would raise NameError *instead
+            # of* reporting the real failure.
+            logging.getLogger(__name__).debug("waveform stream ended: %s", e)
+
+    async def _get_waveform_page(self, request: Request) -> HTMLResponse:
+        """Serve the self-contained waveform viewer."""
+        return HTMLResponse(content=_WAVEFORM_HTML)
+
+
+# Self-contained so it works with no build step, no CDN and no network - this
+# page has to render on a device that may have nothing but a LAN.
+_WAVEFORM_HTML = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>KnightWatcher - Vitals Waveforms</title>
+<style>
+  :root{--bg:#0b0f14;--panel:#131a22;--line:#1f2a36;--ink:#e6edf3;--ink2:#8b9bb0;
+        --resp:#4ade80;--heart:#f87171;--total:#60a5fa;--warn:#fbbf24}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:14px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+  header{display:flex;align-items:baseline;gap:.75rem;flex-wrap:wrap;
+         padding:1rem 1.25rem;border-bottom:1px solid var(--line)}
+  h1{font-size:1.05rem;margin:0;font-weight:600;letter-spacing:.01em}
+  .status{margin-left:auto;font-size:.8rem;color:var(--ink2)}
+  .dot{display:inline-block;width:.5rem;height:.5rem;border-radius:50%;
+       background:var(--warn);margin-right:.4rem;vertical-align:middle}
+  .dot.on{background:var(--resp)}
+  .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+         gap:.75rem;padding:1rem 1.25rem}
+  .tile{background:var(--panel);border:1px solid var(--line);border-radius:.6rem;padding:.75rem .9rem}
+  .tile .k{font-size:.7rem;text-transform:uppercase;letter-spacing:.08em;color:var(--ink2)}
+  .tile .v{font-size:1.7rem;font-variant-numeric:tabular-nums;line-height:1.2;margin-top:.15rem}
+  .tile .u{font-size:.75rem;color:var(--ink2);margin-left:.25rem}
+  .charts{padding:0 1.25rem 1.5rem;display:grid;gap:.75rem}
+  .chart{background:var(--panel);border:1px solid var(--line);border-radius:.6rem;padding:.6rem .75rem}
+  .chart h2{font-size:.72rem;text-transform:uppercase;letter-spacing:.08em;
+            color:var(--ink2);margin:0 0 .35rem;font-weight:600}
+  canvas{width:100%;height:130px;display:block}
+  .note{padding:0 1.25rem 1.5rem;color:var(--ink2);font-size:.78rem;max-width:60ch}
+</style></head><body>
+<header>
+  <h1>Vitals Waveforms</h1>
+  <span style="color:var(--ink2);font-size:.8rem">HLK-LD6002 &middot; 50&nbsp;Hz</span>
+  <span class="status"><span class="dot" id="dot"></span><span id="conn">connecting</span></span>
+</header>
+<div class="tiles">
+  <div class="tile"><div class="k">Respiration</div><div class="v"><span id="rr">--</span><span class="u">bpm</span></div></div>
+  <div class="tile"><div class="k">Heart rate</div><div class="v"><span id="hr">--</span><span class="u">bpm</span></div></div>
+  <div class="tile"><div class="k">Movement</div><div class="v"><span id="mv">--</span></div></div>
+  <div class="tile"><div class="k">Presence</div><div class="v"><span id="pr">--</span></div></div>
+</div>
+<div class="charts">
+  <div class="chart"><h2 style="color:var(--resp)">Respiratory phase</h2><canvas id="c_resp"></canvas></div>
+  <div class="chart"><h2 style="color:var(--heart)">Heartbeat phase</h2><canvas id="c_heart"></canvas></div>
+  <div class="chart"><h2 style="color:var(--total)">Total phase</h2><canvas id="c_total"></canvas></div>
+</div>
+<p class="note">Waveforms are streamed live and never stored. Sustained writes at
+50&nbsp;Hz are what destroyed this device's previous SD card, so nothing on this
+page is persisted &mdash; closing it discards the trace.</p>
+<script>
+const WINDOW_S = 20, MAX = WINDOW_S * 50;
+const buf = {resp:[], heart:[], total:[]};
+const css = k => getComputedStyle(document.documentElement).getPropertyValue(k).trim();
+
+function draw(id, key, colorVar){
+  const cv = document.getElementById(id), dpr = devicePixelRatio || 1;
+  const w = cv.clientWidth, h = cv.clientHeight;
+  if (cv.width !== w*dpr || cv.height !== h*dpr){ cv.width = w*dpr; cv.height = h*dpr; }
+  const g = cv.getContext('2d');
+  g.setTransform(dpr,0,0,dpr,0,0);
+  g.clearRect(0,0,w,h);
+
+  g.strokeStyle = css('--line'); g.lineWidth = 1;
+  g.beginPath(); g.moveTo(0,h/2); g.lineTo(w,h/2); g.stroke();
+
+  const d = buf[key];
+  if (d.length < 2) return;
+  // Autoscale to the visible window; phase amplitude varies a lot with posture,
+  // and a fixed scale would flatten the trace to a line most of the time.
+  let lo = Infinity, hi = -Infinity;
+  for (const v of d){ if (v < lo) lo = v; if (v > hi) hi = v; }
+  const pad = (hi - lo) * 0.15 || 0.5; lo -= pad; hi += pad;
+  const span = (hi - lo) || 1;
+
+  g.strokeStyle = css(colorVar); g.lineWidth = 1.5;
+  g.lineJoin = 'round'; g.beginPath();
+  for (let i = 0; i < d.length; i++){
+    const x = (i / (MAX - 1)) * w;
+    const y = h - ((d[i] - lo) / span) * h;
+    i ? g.lineTo(x,y) : g.moveTo(x,y);
+  }
+  g.stroke();
+}
+
+function render(){
+  draw('c_resp','resp','--resp');
+  draw('c_heart','heart','--heart');
+  draw('c_total','total','--total');
+  requestAnimationFrame(render);
+}
+requestAnimationFrame(render);
+
+const fmt = (v,d=0) => (v===null||v===undefined) ? '--' : Number(v).toFixed(d);
+let ws;
+function connect(){
+  ws = new WebSocket((location.protocol==='https:'?'wss://':'ws://') + location.host + '/ws/waveform');
+  ws.onopen = () => { document.getElementById('conn').textContent = 'live';
+                      document.getElementById('dot').classList.add('on'); };
+  ws.onclose = () => { document.getElementById('conn').textContent = 'reconnecting';
+                       document.getElementById('dot').classList.remove('on');
+                       setTimeout(connect, 1500); };
+  ws.onmessage = ev => {
+    const m = JSON.parse(ev.data);
+    if (m.error){ document.getElementById('conn').textContent = m.error; return; }
+    for (const s of (m.samples||[])){
+      buf.resp.push(s.resp); buf.heart.push(s.heart); buf.total.push(s.total);
+    }
+    for (const k of ['resp','heart','total']) if (buf[k].length > MAX) buf[k].splice(0, buf[k].length - MAX);
+    const v = m.vitals || {};
+    document.getElementById('rr').textContent = fmt(v.respiration_rate);
+    document.getElementById('hr').textContent = fmt(v.heart_rate);
+    document.getElementById('mv').textContent = fmt(v.movement, 2);
+    document.getElementById('pr').textContent = v.presence ? 'yes' : 'no';
+  };
+}
+connect();
+</script></body></html>"""

@@ -532,6 +532,10 @@ class LD6002Detector(BaseDetector):
             message="LD6002 reports absolute rates; no calibration required",
         )
 
+    def waveform_since(self, cursor: float = 0.0) -> list[tuple[float, float, float, float]]:
+        """Recent phase samples for live display. Never persisted - see ld6002.py."""
+        return self._reading.waveform_since(cursor)
+
     def _get_detector_specific_state(self) -> dict[str, Any]:
         """State surfaced to the dashboard and health checks."""
         r = self._reading
@@ -543,5 +547,5 @@ class LD6002Detector(BaseDetector):
             "last_target_distance": r.target_value,
             "current_respiration_rate": r.respiration_rate,
             "current_heart_rate": r.heart_rate,
-            "phase_samples": len(r.phase_history),
+            "phase_samples": len(r.waveform),
         }

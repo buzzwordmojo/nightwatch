@@ -68,6 +68,13 @@ HEART_RATE_BPM_RANGE = (60.0, 150.0)
 # reporting genuine loss of signal.
 RATE_STALE_SECONDS = 30.0
 
+# Seconds of phase waveform retained in memory for live display and movement
+# estimation. These samples are deliberately NEVER persisted: at 50 Hz they
+# would out-write the vitals table many times over, and sustained writes to the
+# SD card are what destroyed the previous one.
+WAVEFORM_SECONDS = 30.0
+WAVEFORM_MAX_SAMPLES = int(WAVEFORM_SECONDS * 50)
+
 
 @dataclass
 class LD6002Frame:
@@ -98,7 +105,14 @@ class LD6002Reading:
     heart_phase: float | None = None
     target_present: bool = False
     target_value: float | None = None
-    phase_history: list[float] = field(default_factory=list)
+
+    # (timestamp, total_phase, respiratory_phase, heart_phase), newest last.
+    waveform: list[tuple[float, float, float, float]] = field(default_factory=list)
+
+    @property
+    def phase_history(self) -> list[float]:
+        """The respiratory-phase column, for movement estimation."""
+        return [w[2] for w in self.waveform]
 
     # When each rate was last confirmed by an in-range frame.
     respiration_updated_at: float = 0.0
@@ -118,11 +132,9 @@ class LD6002Reading:
         if t == TYPE_PHASE:
             total, resp, heart = frame.floats()
             self.total_phase, self.respiration_phase, self.heart_phase = total, resp, heart
-            # Bounded history of the respiratory phase, for movement estimation
-            # and for the dashboard waveform.
-            self.phase_history.append(resp)
-            if len(self.phase_history) > 500:  # 10s at 50 Hz
-                del self.phase_history[:-500]
+            self.waveform.append((now, total, resp, heart))
+            if len(self.waveform) > WAVEFORM_MAX_SAMPLES:
+                del self.waveform[:-WAVEFORM_MAX_SAMPLES]
         elif t == TYPE_RESPIRATION:
             (v,) = frame.floats()
             lo, hi = RESPIRATION_BPM_RANGE
@@ -141,6 +153,13 @@ class LD6002Reading:
             (val,) = struct.unpack("<f", frame.payload[4:])
             self.target_present = bool(flag)
             self.target_value = val
+    def waveform_since(self, cursor: float) -> list[tuple[float, float, float, float]]:
+        """Samples newer than `cursor`, so a client can stream incrementally."""
+        if not self.waveform:
+            return []
+        if cursor <= 0:
+            return list(self.waveform)
+        return [w for w in self.waveform if w[0] > cursor]
 
 
 class LD6002Driver:
