@@ -277,6 +277,15 @@ class HeartbeatConfig(BaseModel):
     startup_grace_seconds: float = Field(default=420.0, ge=0.0)
 
 
+class ConvexBridgeConfig(BaseModel):
+    """Configuration for the Convex persistence bridge."""
+
+    # How long vitals collection continues after presence is lost. Production
+    # wants minutes (a bathroom trip should not fragment the night); testing
+    # wants seconds so a walk-away is observable without waiting.
+    presence_linger_seconds: float = Field(default=600.0, ge=0.0)
+
+
 class SystemConfig(BaseModel):
     """Top-level system configuration."""
 
@@ -296,6 +305,7 @@ class NightwatchConfig(BaseModel):
     notifiers: NotifiersConfig = Field(default_factory=NotifiersConfig)
     dashboard: DashboardConfig = Field(default_factory=DashboardConfig)
     heartbeat: HeartbeatConfig = Field(default_factory=HeartbeatConfig)
+    convex: ConvexBridgeConfig = Field(default_factory=ConvexBridgeConfig)
 
 
 # ============================================================================
@@ -708,3 +718,7 @@ class Config:
     @property
     def heartbeat(self) -> HeartbeatConfig:
         return self._typed.heartbeat
+
+    @property
+    def convex(self) -> ConvexBridgeConfig:
+        return self._typed.convex

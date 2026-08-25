@@ -28,7 +28,7 @@ from nightwatch.detectors.radar.detector import MockRadarDetector
 from nightwatch.detectors.audio.detector import AudioDetector, MockAudioDetector
 from nightwatch.detectors.bcg.detector import MockBCGDetector
 from nightwatch.dashboard.server import DashboardServer
-from nightwatch.bridge.convex import ConvexBridge, ConvexEventHandler
+from nightwatch.bridge.convex import ConvexBridge, ConvexConfig, ConvexEventHandler
 from nightwatch.setup.portal import CaptivePortal
 from nightwatch.setup.hotspot import HotspotManager
 from nightwatch.setup.first_boot import detect_setup_state, SetupState
@@ -430,7 +430,12 @@ async def run_nightwatch(
             d.name for d in detectors
             if isinstance(d, (MockRadarDetector, MockAudioDetector, MockBCGDetector))
         }
-        convex_bridge = ConvexBridge(mock_detectors=mock_names)
+        convex_bridge = ConvexBridge(
+            config=ConvexConfig(
+                presence_linger_seconds=config.convex.presence_linger_seconds,
+            ),
+            mock_detectors=mock_names,
+        )
         convex_handler = ConvexEventHandler(convex_bridge)
         print("🔗 Convex bridge enabled")
 

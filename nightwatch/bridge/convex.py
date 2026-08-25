@@ -21,12 +21,6 @@ from nightwatch.core.events import Event, EventState
 logger = logging.getLogger(__name__)
 
 
-# How long collection continues after presence is lost. A bathroom trip or a
-# parent stepping out should not fragment the night into separate sessions,
-# and the transition itself (occupied -> empty) is worth capturing.
-PRESENCE_LINGER_SECONDS = 600.0
-
-
 class ConvexUnavailableError(RuntimeError):
     """Convex could not be reached. Distinct from Convex answering with no data."""
 
@@ -39,6 +33,12 @@ class ConvexConfig:
     timeout: float = 5.0
     batch_interval: float = 1.0  # Batch readings every N seconds
     retry_attempts: int = 3
+    # How long collection continues after presence is lost. A bathroom trip
+    # should not fragment the night into separate sessions, and the
+    # occupied -> empty transition itself is worth capturing. Configurable via
+    # config.yaml (convex.presence_linger_seconds), mainly so testing can use
+    # seconds instead of minutes.
+    presence_linger_seconds: float = 600.0
 
 
 class ConvexBridge:
@@ -297,7 +297,7 @@ class ConvexBridge:
             self._last_present_at = time.time()
 
     def _is_collecting(self) -> bool:
-        return (time.time() - self._last_present_at) < PRESENCE_LINGER_SECONDS
+        return (time.time() - self._last_present_at) < self._config.presence_linger_seconds
 
     def _add_reading(self, event: Event) -> None:
         """Add event data to readings batch."""

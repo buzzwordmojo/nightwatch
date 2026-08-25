@@ -689,7 +689,7 @@ class TestCollectionGatedOnPresence:
         now = [1000.0]
         b = self._bridge(monkeypatch, now)
         b._add_reading(self._event(respiration_rate=18.0, presence=True))
-        now[0] += mod.PRESENCE_LINGER_SECONDS - 5
+        now[0] += b._config.presence_linger_seconds - 5
         b._add_reading(self._event(respiration_rate=17.0, presence=False))
         assert len(b._pending_readings) == 2, "linger window should still collect"
 
@@ -699,7 +699,7 @@ class TestCollectionGatedOnPresence:
         now = [1000.0]
         b = self._bridge(monkeypatch, now)
         b._add_reading(self._event(respiration_rate=18.0, presence=True))
-        now[0] += mod.PRESENCE_LINGER_SECONDS + 5
+        now[0] += b._config.presence_linger_seconds + 5
         b._add_reading(self._event(respiration_rate=17.0, presence=False))
         assert len(b._pending_readings) == 1, "collection should stop after the linger"
 
@@ -716,3 +716,16 @@ class TestCollectionGatedOnPresence:
         b = self._bridge(monkeypatch, now)
         b._add_reading(self._event(respiration_rate=None, presence=True))
         assert all("respirationRate" not in r for r in b._pending_readings)
+
+
+    def test_linger_is_configurable(self, monkeypatch):
+        """The linger comes from config - testing uses seconds, production minutes."""
+        import nightwatch.bridge.convex as mod
+
+        now = [1000.0]
+        monkeypatch.setattr(mod.time, "time", lambda: now[0])
+        b = mod.ConvexBridge(config=mod.ConvexConfig(presence_linger_seconds=30.0))
+        b._add_reading(self._event(respiration_rate=18.0, presence=True))
+        now[0] += 31
+        b._add_reading(self._event(respiration_rate=17.0, presence=False))
+        assert len(b._pending_readings) == 1
