@@ -120,6 +120,24 @@ export const getCurrentVitals = query({
   handler: async (ctx) => {
     const detectors = await ctx.db.query("detectorState").collect();
 
+    // Which detectors are simulated. Mock data may drive the per-detector
+    // cards (with their SIM badges) but must never supply the headline
+    // vitals: the mock BCG reports a permanently occupied bed with a
+    // wiggling heart rate, and letting it fall through showed
+    // "Occupied, 71 BPM" over a room the radar knew was empty.
+    const statuses = await ctx.db.query("systemStatus").collect();
+    const mocks = new Set(
+      statuses.filter((c) => c.mock).map((c) => c.component),
+    );
+
+    // A detectorState doc is a snapshot, not a stream: when its writer goes
+    // quiet the doc just sits there. Values older than this are treated as
+    // absent rather than current.
+    const STALE_MS = 15000;
+    const now = Date.now();
+    const fresh = (d: { updatedAt?: number }) =>
+      d.updatedAt != null && now - d.updatedAt < STALE_MS;
+
     const vitals: Record<string, any> = {
       timestamp: Date.now(),
       respirationRate: null,
@@ -141,35 +159,45 @@ export const getCurrentVitals = query({
         updatedAt: detector.updatedAt,
       };
 
+      const usable = fresh(detector) && !mocks.has(detector.detector);
+
       // Extract specific values from raw detectors (as fallbacks)
-      if (detector.detector === "radar") {
+      if (usable && detector.detector === "radar") {
         vitals.respirationRate = detector.value?.respiration_rate ?? null;
+        if (detector.value?.heart_rate != null) {
+          vitals.heartRate = detector.value.heart_rate;
+        }
+        if (detector.value?.presence != null) {
+          vitals.bedOccupied = detector.value.presence;
+        }
       }
-      if (detector.detector === "audio") {
+      if (usable && detector.detector === "audio") {
         vitals.breathingDetected = detector.value?.breathing_detected ?? null;
         if (!vitals.respirationRate && detector.value?.breathing_rate) {
           vitals.respirationRate = detector.value.breathing_rate;
         }
       }
-      if (detector.detector === "bcg") {
+      if (usable && detector.detector === "bcg") {
         vitals.heartRate = detector.value?.heart_rate ?? null;
         vitals.bedOccupied = detector.value?.bed_occupied ?? null;
       }
 
-      // Fusion channels override raw values
-      if (detector.detector === "fusion.respiration_rate") {
+      // Fusion channels override raw values - but only while their writer is
+      // alive. Fusion docs go stale exactly when their sources stop
+      // contributing, which is exactly when they must not win.
+      if (fresh(detector) && detector.detector === "fusion.respiration_rate") {
         if (detector.value?.value != null) {
           vitals.respirationRate = detector.value.value;
           vitals.fusionAgreement = detector.value.agreement ?? 1.0;
           vitals.fusionSources = detector.value.source_count ?? 1;
         }
       }
-      if (detector.detector === "fusion.heart_rate") {
+      if (fresh(detector) && detector.detector === "fusion.heart_rate") {
         if (detector.value?.value != null) {
           vitals.heartRate = detector.value.value;
         }
       }
-      if (detector.detector === "fusion.presence") {
+      if (fresh(detector) && detector.detector === "fusion.presence") {
         if (detector.value?.value != null) {
           vitals.bedOccupied = detector.value.value;
         }
