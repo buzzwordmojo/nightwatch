@@ -10,6 +10,7 @@
 
 import type * as alertRules from "../alertRules.js";
 import type * as alerts from "../alerts.js";
+import type * as crons from "../crons.js";
 import type * as settings from "../settings.js";
 import type * as sharing from "../sharing.js";
 import type * as system from "../system.js";
@@ -24,6 +25,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   alertRules: typeof alertRules;
   alerts: typeof alerts;
+  crons: typeof crons;
   settings: typeof settings;
   sharing: typeof sharing;
   system: typeof system;
