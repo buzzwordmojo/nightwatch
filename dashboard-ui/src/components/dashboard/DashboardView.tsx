@@ -133,7 +133,9 @@ export function DashboardView({
 
       {/* Vitals Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        <MockBadgeWrapper mock={isMockSensor("bcg")}>
+        {/* Heart rate and bed status are radar measurements since the LD6002:
+            fusion excludes the mock BCG, so the badge follows the radar. */}
+        <MockBadgeWrapper mock={isMockSensor("radar")}>
           <VitalCard
             title="Heart Rate"
             value={vitals?.heartRate}
@@ -175,7 +177,7 @@ export function DashboardView({
           />
         </MockBadgeWrapper>
 
-        <MockBadgeWrapper mock={isMockSensor("bcg")}>
+        <MockBadgeWrapper mock={isMockSensor("radar")}>
           <VitalCard
             title="Bed Status"
             value={vitals?.bedOccupied ? "Occupied" : "Empty"}
