@@ -163,3 +163,25 @@ def test_presence_decays_when_target_frames_stop(monkeypatch):
     now[0] += mod.PRESENCE_STALE_SECONDS + 1
     r.apply(LD6002Frame(2, TYPE_RESPIRATION, struct.pack("<f", 0.0)))
     assert r.target_present is False, "presence held forever after target frames stopped"
+
+
+def test_presence_gate_is_configurable(monkeypatch):
+    """The realtime presence gate comes from config, distinct from the
+    collection linger - the live view admits an empty room in seconds while
+    history keeps recording through a bathroom trip."""
+    import nightwatch.detectors.radar.ld6002 as mod
+
+    now = [1000.0]
+    monkeypatch.setattr(mod.time, "time", lambda: now[0])
+
+    r = LD6002Reading(presence_stale_seconds=5.0)
+    r.apply(LD6002Frame(1, TYPE_TARGET, struct.pack("<i", 1) + struct.pack("<f", 85.0)))
+    now[0] += 6
+    r.apply(LD6002Frame(2, TYPE_RESPIRATION, struct.pack("<f", 0.0)))
+    assert r.target_present is False
+
+    r2 = LD6002Reading(presence_stale_seconds=60.0)
+    r2.apply(LD6002Frame(1, TYPE_TARGET, struct.pack("<i", 1) + struct.pack("<f", 85.0)))
+    now[0] += 6
+    r2.apply(LD6002Frame(2, TYPE_RESPIRATION, struct.pack("<f", 0.0)))
+    assert r2.target_present is True, "a 60s gate must not expire after 6s"

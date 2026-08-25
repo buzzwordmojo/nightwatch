@@ -68,12 +68,12 @@ HEART_RATE_BPM_RANGE = (60.0, 150.0)
 # reporting genuine loss of signal.
 RATE_STALE_SECONDS = 30.0
 
-# How long without a target frame before presence is treated as false. With an
-# empty room the module stops sending 0x0a16 entirely (verified on hardware:
-# 10s of empty room produced 0x0a14/15 placeholders at 50 Hz and not one
-# target or phase frame), so presence must decay on silence - otherwise
-# target_present keeps its last value forever and the "Subject not detected"
-# alert can never fire after the person leaves.
+# Default for how long presence survives without a target frame. With an empty
+# room the module stops sending 0x0a16 entirely (verified on hardware), so
+# presence must decay on silence - otherwise target_present keeps its last
+# value forever and the "Subject not detected" alert can never fire.
+# Configurable per-reading via presence_stale_seconds
+# (config: detectors.radar.presence_timeout_seconds).
 PRESENCE_STALE_SECONDS = 10.0
 
 # Seconds of phase waveform retained in memory for live display and movement
@@ -126,13 +126,14 @@ class LD6002Reading:
     respiration_updated_at: float = 0.0
     heart_rate_updated_at: float = 0.0
     target_updated_at: float = 0.0
+    presence_stale_seconds: float = PRESENCE_STALE_SECONDS
 
     def _expire_stale(self, now: float) -> None:
         if self.respiration_rate is not None and now - self.respiration_updated_at > RATE_STALE_SECONDS:
             self.respiration_rate = None
         if self.heart_rate is not None and now - self.heart_rate_updated_at > RATE_STALE_SECONDS:
             self.heart_rate = None
-        if self.target_present and now - self.target_updated_at > PRESENCE_STALE_SECONDS:
+        if self.target_present and now - self.target_updated_at > self.presence_stale_seconds:
             self.target_present = False
 
     def apply(self, frame: LD6002Frame) -> None:

@@ -42,6 +42,12 @@ class RadarConfig(BaseModel):
     movement_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
     detection_distance_min: float = Field(default=0.3, ge=0.0)
     detection_distance_max: float = Field(default=3.0, ge=0.0)
+    # How long the LIVE view holds "present" after the LD6002 stops sending
+    # target frames. Deliberately much smaller than the collection linger
+    # (convex.presence_linger_seconds): the realtime display should admit the
+    # room is empty within seconds, while history keeps recording through a
+    # bathroom trip. This gate also feeds the "Subject not detected" alert.
+    presence_timeout_seconds: float = Field(default=10.0, ge=1.0)
 
     @field_validator("model")
     @classmethod

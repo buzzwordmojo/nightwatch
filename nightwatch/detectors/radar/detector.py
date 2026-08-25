@@ -429,7 +429,9 @@ class LD6002Detector(BaseDetector):
         super().__init__("radar", publisher)
         self._config = config or RadarConfig()
         self._driver: LD6002Driver | None = None
-        self._reading = LD6002Reading()
+        self._reading = LD6002Reading(
+            presence_stale_seconds=self._config.presence_timeout_seconds,
+        )
         self._frames_processed = 0
 
     async def _connect(self) -> None:
