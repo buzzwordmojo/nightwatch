@@ -142,3 +142,24 @@ def test_target_frame_sets_presence():
     r.apply(LD6002Frame(1, TYPE_TARGET, struct.pack("<i", 1) + struct.pack("<f", 85.68)))
     assert r.target_present is True
     assert round(r.target_value, 2) == 85.68
+
+
+def test_presence_decays_when_target_frames_stop(monkeypatch):
+    """
+    With an empty room the module stops sending target frames entirely
+    (verified on hardware), so presence must decay on silence - otherwise the
+    "Subject not detected" alert can never fire after the person leaves.
+    """
+    import nightwatch.detectors.radar.ld6002 as mod
+
+    now = [1000.0]
+    monkeypatch.setattr(mod.time, "time", lambda: now[0])
+
+    r = LD6002Reading()
+    r.apply(LD6002Frame(1, TYPE_TARGET, struct.pack("<i", 1) + struct.pack("<f", 85.0)))
+    assert r.target_present is True
+
+    # Empty room: only 0.0-valued rate placeholders keep arriving.
+    now[0] += mod.PRESENCE_STALE_SECONDS + 1
+    r.apply(LD6002Frame(2, TYPE_RESPIRATION, struct.pack("<f", 0.0)))
+    assert r.target_present is False, "presence held forever after target frames stopped"
