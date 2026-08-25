@@ -69,7 +69,14 @@ class ConvexBridge:
 
         # Throttle detector state updates (avoid OCC conflicts)
         self._last_detector_update: dict[str, float] = {}
-        self._detector_update_interval = 0.5  # Max 2 updates/sec per detector
+        # Every detectorState patch appends a full document revision to Convex's
+        # internal log, and that log is trimmed on a schedule we do not control.
+        # At 2 updates/sec across detectors plus fusion channels the log grew
+        # ~11k revisions/hour (~480 MB/day on disk) - the same growth-until-
+        # wedge shape that killed the first SD card. 5s state updates are ample
+        # for status dots; the live feel comes from the waveform socket, and
+        # vitals history from the readings table, neither of which changes.
+        self._detector_update_interval = 5.0
 
         # Backoff state
         self._consecutive_failures = 0

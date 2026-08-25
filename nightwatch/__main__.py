@@ -538,7 +538,10 @@ async def run_nightwatch(
                     )
             except Exception as e:
                 print(f"Warning: Failed to update system status: {e}")
-            await asyncio.sleep(15)  # Update every 15 seconds
+            # 60s, not 15: each component's status update is a document
+            # revision in Convex's append-only log. See ConvexBridge on why
+            # write volume is a disk-lifetime issue on this device.
+            await asyncio.sleep(60)
 
     status_task = None
     if convex_bridge:
