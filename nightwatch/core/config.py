@@ -35,7 +35,7 @@ class RadarConfig(BaseModel):
     enabled: bool = True
     device: str = "/dev/ttyAMA0"
     baud_rate: int = 256000
-    model: str = "ld2450"  # ld2450 | ld2410
+    model: str = "ld2450"  # ld2450 | ld2410 | ld6002
     sensitivity: float = Field(default=0.8, ge=0.0, le=1.0)
     update_rate_hz: int = Field(default=10, ge=1, le=30)
     respiration_threshold: float = Field(default=0.3, ge=0.0, le=1.0)
@@ -46,8 +46,9 @@ class RadarConfig(BaseModel):
     @field_validator("model")
     @classmethod
     def validate_model(cls, v: str) -> str:
-        if v not in ("ld2450", "ld2410"):
-            raise ValueError(f"Model must be 'ld2450' or 'ld2410', got '{v}'")
+        valid = ("ld2450", "ld2410", "ld6002")
+        if v not in valid:
+            raise ValueError(f"Model must be one of {valid}, got '{v}'")
         return v
 
 

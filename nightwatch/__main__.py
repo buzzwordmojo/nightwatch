@@ -23,7 +23,7 @@ from nightwatch.core.fusion import FusionEngine
 from nightwatch.core.heartbeat import HeartbeatReporter
 from nightwatch.core.notifiers.audio import AudioNotifier
 from nightwatch.core.notifiers.push import PushConfig, PushNotifier, PushProvider
-from nightwatch.detectors.radar import RadarDetector
+from nightwatch.detectors.radar import RadarDetector, LD6002Detector
 from nightwatch.detectors.radar.detector import MockRadarDetector
 from nightwatch.detectors.audio.detector import AudioDetector, MockAudioDetector
 from nightwatch.detectors.bcg.detector import MockBCGDetector
@@ -316,10 +316,19 @@ async def run_nightwatch(
             print("  ✓ Mock BCG detector")
     else:
         if config.detectors.radar.enabled:
-            detectors.append(RadarDetector(
-                config=config.detectors.radar,
-                publisher=publisher,
-            ))
+            # The LD6002 measures respiration and heart rate directly, so it
+            # gets its own detector rather than the LD2450's position-jitter
+            # inference path.
+            if config.detectors.radar.model == "ld6002":
+                detectors.append(LD6002Detector(
+                    config=config.detectors.radar,
+                    publisher=publisher,
+                ))
+            else:
+                detectors.append(RadarDetector(
+                    config=config.detectors.radar,
+                    publisher=publisher,
+                ))
             print("  ✓ Radar detector")
 
         if config.detectors.audio.enabled:

@@ -18,6 +18,7 @@ from nightwatch.core.config import RadarConfig
 from nightwatch.core.events import Event, EventState, Publisher
 from nightwatch.detectors.base import BaseDetector, CalibrationResult, DetectorStatus
 from nightwatch.detectors.radar.ld2450 import LD2450Driver, LD2450Frame, LD2450Target
+from nightwatch.detectors.radar.ld6002 import LD6002Driver, LD6002Reading
 from nightwatch.detectors.radar.processing import (
     RespirationExtractor,
     HeartRateEstimator,
@@ -406,3 +407,141 @@ class MockRadarDetector(RadarDetector):
         self._anomaly_type = anomaly_type
         self._anomaly_start = time.time()
         self._anomaly_duration = duration
+
+
+class LD6002Detector(BaseDetector):
+    """
+    Vitals detector for the HLK-LD6002 60GHz radar.
+
+    Deliberately separate from RadarDetector rather than a branch inside it. The
+    two sensors differ in kind, not degree: the LD2450 reports target positions
+    and RadarDetector infers breathing from their jitter, while the LD6002
+    reports respiration and heart rate as measured values. Running the LD6002
+    through that inference path would degrade a direct measurement, and bolting
+    a second data model onto RadarDetector would put the LD2450 path at risk of
+    regression for no benefit.
+
+    Emits under the detector name "radar" so alert rules, fusion config and the
+    dashboard keep working unchanged.
+    """
+
+    def __init__(self, config: RadarConfig | None = None, publisher: Publisher | None = None):
+        super().__init__("radar", publisher)
+        self._config = config or RadarConfig()
+        self._driver: LD6002Driver | None = None
+        self._reading = LD6002Reading()
+        self._frames_processed = 0
+
+    async def _connect(self) -> None:
+        self._driver = LD6002Driver(
+            port=self._config.device,
+            baud_rate=self._config.baud_rate or LD6002Driver.DEFAULT_BAUD,
+        )
+        await self._driver.connect()
+
+    async def _disconnect(self) -> None:
+        if self._driver:
+            await self._driver.disconnect()
+            self._driver = None
+
+    def _movement_level(self) -> float:
+        """
+        Movement from the spread of the respiratory phase signal.
+
+        Quiet breathing traces a small, smooth oscillation; gross movement
+        throws the phase around. Standard deviation over the recent window is a
+        cheap proxy that needs no extra sensor.
+        """
+        hist = self._reading.phase_history
+        if len(hist) < 10:
+            return 0.0
+        recent = hist[-100:]
+        mean = sum(recent) / len(recent)
+        var = sum((x - mean) ** 2 for x in recent) / len(recent)
+        return min(1.0, (var ** 0.5) / 2.0)
+
+    async def _read_loop(self) -> None:
+        if not self._driver:
+            raise RuntimeError("Driver not connected")
+
+        interval = 1.0 / self._config.update_rate_hz
+        last_emit = 0.0
+
+        async for frame in self._driver.read_frames():
+            if not self._running:
+                break
+            self._frames_processed += 1
+            self._reading.apply(frame)
+
+            now = time.time()
+            if now - last_emit >= interval:
+                await self._emit_current_state()
+                last_emit = now
+
+    async def _emit_current_state(self) -> None:
+        r = self._reading
+        movement = self._movement_level()
+
+        state = EventState.NORMAL
+        confidence = 0.5
+        if not r.target_present:
+            state = EventState.UNCERTAIN
+            confidence = 0.3
+        elif r.respiration_rate is not None:
+            confidence = 0.9  # a measured rate, not an inferred one
+            if r.respiration_rate < 6:
+                state = EventState.ALERT
+            elif r.respiration_rate < 8:
+                state = EventState.WARNING
+
+        value = {
+            "respiration_rate": round(r.respiration_rate, 1) if r.respiration_rate else None,
+            "respiration_amplitude": round(abs(r.respiration_phase), 2) if r.respiration_phase is not None else 0.0,
+            # Measured by the module rather than estimated, but the key is kept
+            # so fusion, alert rules and the dashboard need no changes.
+            "heart_rate_estimate": round(r.heart_rate, 1) if r.heart_rate else None,
+            "heart_rate": round(r.heart_rate, 1) if r.heart_rate else None,
+            "movement": round(movement, 2),
+            "movement_is_macro": movement > self._config.movement_threshold,
+            "presence": r.target_present,
+            "target_distance": round(r.target_value, 2) if r.target_value is not None else None,
+            # The LD6002 does not report bearing or position at all.
+            "target_angle": None,
+            "x": None,
+            "y": None,
+            # Phase waveforms - 50 Hz, for the dashboard and for seizure work.
+            "total_phase": round(r.total_phase, 4) if r.total_phase is not None else None,
+            "respiration_phase": round(r.respiration_phase, 4) if r.respiration_phase is not None else None,
+            "heart_phase": round(r.heart_phase, 4) if r.heart_phase is not None else None,
+        }
+
+        await self._emit_event(state, confidence, value)
+
+    async def _calibrate_impl(self) -> CalibrationResult:
+        """
+        Nothing to calibrate.
+
+        The module does its own signal processing and reports absolute rates, so
+        there is no baseline to establish the way there is for position-derived
+        respiration.
+        """
+        if not self._driver:
+            return CalibrationResult(success=False, message="Radar not connected")
+        return CalibrationResult(
+            success=True,
+            message="LD6002 reports absolute rates; no calibration required",
+        )
+
+    def _get_detector_specific_state(self) -> dict[str, Any]:
+        """State surfaced to the dashboard and health checks."""
+        r = self._reading
+        return {
+            "device": self._config.device,
+            "model": self._config.model,
+            "frames_processed": self._frames_processed,
+            "presence_detected": r.target_present,
+            "last_target_distance": r.target_value,
+            "current_respiration_rate": r.respiration_rate,
+            "current_heart_rate": r.heart_rate,
+            "phase_samples": len(r.phase_history),
+        }
