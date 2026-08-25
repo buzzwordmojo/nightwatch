@@ -46,8 +46,17 @@ class ConvexBridge:
     CPU overload from tight retry loops.
     """
 
-    def __init__(self, config: ConvexConfig | None = None):
+    def __init__(
+        self,
+        config: ConvexConfig | None = None,
+        mock_detectors: set[str] | None = None,
+    ):
         self._config = config or ConvexConfig()
+        # Detectors whose data is simulated. Their events still drive the live
+        # UI (with its SIM badges), but their vitals must never enter the
+        # readings table - a chart of Miles's heart rate that is quietly 70%
+        # generated noise is worse than a gap.
+        self._mock_detectors = mock_detectors or set()
         self._client: httpx.AsyncClient | None = None
         self._running = False
 
@@ -256,6 +265,9 @@ class ConvexBridge:
 
     def _add_reading(self, event: Event) -> None:
         """Add event data to readings batch."""
+        if event.detector in self._mock_detectors:
+            return
+
         reading: dict[str, Any] = {}
 
         # Extract relevant values based on detector type

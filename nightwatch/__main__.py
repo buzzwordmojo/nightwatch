@@ -387,8 +387,13 @@ async def run_nightwatch(
                 strategy="weighted_average",
                 min_sources=1,
                 sources=[
-                    FusionRuleSource(detector="bcg", field="value.heart_rate", weight=1.0),
-                    FusionRuleSource(detector="radar", field="value.heart_rate_estimate", weight=0.4),
+                    # The radar (LD6002) measures heart rate directly. BCG is
+                    # deliberately absent: no BCG hardware exists and the only
+                    # BCG detector ever constructed is the mock, so at its old
+                    # weight of 1.0 vs radar 0.4 the "fused" heart rate written
+                    # to the database was ~70% simulated noise. Re-add BCG here
+                    # only when a real sensor is installed.
+                    FusionRuleSource(detector="radar", field="value.heart_rate", weight=1.0),
                 ],
             ),
             FusionRule(
@@ -397,7 +402,8 @@ async def run_nightwatch(
                 min_sources=1,
                 sources=[
                     FusionRuleSource(detector="radar", field="value.presence", weight=1.0),
-                    FusionRuleSource(detector="bcg", field="value.bed_occupied", weight=1.0),
+                    # bcg bed_occupied excluded for the same reason as heart
+                    # rate above: the only BCG is the mock.
                 ],
             ),
             FusionRule(
@@ -420,7 +426,11 @@ async def run_nightwatch(
     convex_bridge = None
     convex_handler = None
     if enable_convex:
-        convex_bridge = ConvexBridge()
+        mock_names = {
+            d.name for d in detectors
+            if isinstance(d, (MockRadarDetector, MockAudioDetector, MockBCGDetector))
+        }
+        convex_bridge = ConvexBridge(mock_detectors=mock_names)
         convex_handler = ConvexEventHandler(convex_bridge)
         print("🔗 Convex bridge enabled")
 

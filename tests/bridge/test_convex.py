@@ -621,3 +621,21 @@ class TestRadarHeartRateIsStored:
     def test_absent_heart_rate_is_not_written_as_null(self):
         r = self._reading_for({"respiration_rate": 18.0, "heart_rate": None})
         assert "heartRate" not in r
+
+
+class TestMockDataNeverPersisted:
+    """Simulated detectors must not write vitals history."""
+
+    def test_mock_detector_readings_are_dropped(self):
+        import time
+
+        from nightwatch.bridge.convex import ConvexBridge
+        from nightwatch.core.events import Event, EventState
+
+        bridge = ConvexBridge(mock_detectors={"bcg"})
+        bridge._add_reading(Event(
+            detector="bcg", timestamp=time.time(), confidence=0.9,
+            state=EventState.NORMAL,
+            value={"heart_rate": 62.0, "bed_occupied": True},
+        ))
+        assert bridge._pending_readings == [], "mock vitals reached the readings batch"

@@ -331,7 +331,7 @@ install_convex() {
         local download_url="https://github.com/get-convex/convex-backend/releases/download/${release_tag}/${binary_name}"
 
         curl -L -o "/tmp/${binary_name}" "$download_url"
-        cd /tmp && unzip -o "${binary_name}" convex-local-backend
+        ( cd /tmp && unzip -o "${binary_name}" convex-local-backend )
         mv /tmp/convex-local-backend "${convex_dir}/convex-local-backend"
         rm -f "/tmp/${binary_name}"
 

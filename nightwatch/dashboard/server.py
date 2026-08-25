@@ -601,6 +601,12 @@ class DashboardServer:
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
 </head>
 <body>
+    <div style="background:#7c2d12;color:#fed7aa;padding:.6rem 1rem;text-align:center;
+                font:600 .85rem/1.4 system-ui,sans-serif;letter-spacing:.02em">
+        FALLBACK INTERFACE &mdash; the full dashboard is not installed on this device.
+        Monitoring itself is unaffected. To fix: build dashboard-ui and deploy to
+        /opt/nightwatch/dashboard (see install.sh install_dashboard).
+    </div>
     <div class="container">
         <header>
             <h1>Nightwatch</h1>
