@@ -2442,17 +2442,27 @@ class DashboardServer:
             return
 
         cursor = 0.0
+        last_send = 0.0
         try:
             while True:
                 samples = detector.waveform_since(cursor)
-                if samples:
-                    cursor = samples[-1][0]
+                now = time.time()
+                # With an empty room the LD6002 stops producing phase frames
+                # entirely, so "no samples" is the normal steady state, not an
+                # idle moment. A stream that only speaks when samples exist
+                # goes silent exactly then - the client freezes on its last
+                # trace and cannot tell an empty room from a dead socket.
+                # Heartbeat once a second regardless, carrying presence.
+                if samples or now - last_send >= 1.0:
+                    if samples:
+                        cursor = samples[-1][0]
                     await websocket.send_json({
                         "samples": [
                             {"t": round(t, 3), "total": round(a, 4),
                              "resp": round(b, 4), "heart": round(c, 4)}
                             for t, a, b, c in samples
                         ],
+                        "now": round(now, 3),
                         "vitals": {
                             "respiration_rate": self._current_state.get("respiration_rate"),
                             "heart_rate": self._current_state.get("heart_rate"),
@@ -2460,6 +2470,7 @@ class DashboardServer:
                             "presence": self._current_state.get("presence"),
                         },
                     })
+                    last_send = now
                 # ~20 Hz of batches; each carries whatever accumulated.
                 await asyncio.sleep(0.05)
         except WebSocketDisconnect:
