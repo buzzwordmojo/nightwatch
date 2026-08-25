@@ -587,3 +587,37 @@ class TestConvexBridgeEdgeCases:
         assert len(bridge._pending_readings) == 5
 
         await bridge.stop()
+
+
+class TestRadarHeartRateIsStored:
+    """
+    The LD6002 measures heart rate directly, so it must reach the database.
+
+    Regression: _add_reading extracted only respiration_rate for the radar
+    detector, which was correct while the LD2450's heart rate was a weak
+    inference. With the LD6002 the radar is the only real HR source on the
+    device, and dropping it here meant no historical pulse at all.
+    """
+
+    def _reading_for(self, value):
+        import time
+
+        from nightwatch.bridge.convex import ConvexBridge
+        from nightwatch.core.events import Event, EventState
+
+        bridge = ConvexBridge()
+        bridge._add_reading(Event(
+            detector="radar", timestamp=time.time(), confidence=0.9,
+            state=EventState.NORMAL, value=value,
+        ))
+        return bridge._pending_readings[0] if bridge._pending_readings else {}
+
+    def test_measured_heart_rate_is_captured(self):
+        r = self._reading_for({"respiration_rate": 18.0, "heart_rate": 72.0, "presence": True})
+        assert r.get("heartRate") == 72.0, "radar heart rate was dropped"
+        assert r.get("respirationRate") == 18.0
+        assert r.get("bedOccupied") is True
+
+    def test_absent_heart_rate_is_not_written_as_null(self):
+        r = self._reading_for({"respiration_rate": 18.0, "heart_rate": None})
+        assert "heartRate" not in r

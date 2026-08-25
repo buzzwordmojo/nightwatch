@@ -262,6 +262,15 @@ class ConvexBridge:
         if event.detector == "radar":
             if "respiration_rate" in event.value:
                 reading["respirationRate"] = event.value["respiration_rate"]
+            # The LD2450 had no real heart rate - only a weak inference from
+            # position jitter - so radar HR was deliberately not stored. The
+            # LD6002 measures it directly, and dropping it here would mean no
+            # historical pulse at all on a device whose only HR source is now
+            # the radar.
+            if event.value.get("heart_rate") is not None:
+                reading["heartRate"] = event.value["heart_rate"]
+            if event.value.get("presence") is not None:
+                reading["bedOccupied"] = event.value["presence"]
 
         elif event.detector == "audio":
             if "breathing_rate" in event.value:
