@@ -60,7 +60,7 @@ class ConvexBridge:
         self._config = config or ConvexConfig()
         # Detectors whose data is simulated. Their events still drive the live
         # UI (with its SIM badges), but their vitals must never enter the
-        # readings table - a chart of Miles's heart rate that is quietly 70%
+        # readings table - a heart-rate chart that is quietly 70%
         # generated noise is worse than a gap.
         self._mock_detectors = mock_detectors or set()
         self._client: httpx.AsyncClient | None = None

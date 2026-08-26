@@ -14,18 +14,17 @@ What it fixes:
 
 | Today | With the Pi on the tailnet |
 |---|---|
-| Dashboard only from the `Mattax` WiFi | Dashboard from anywhere, phone or laptop |
+| Dashboard only from the home WiFi | Dashboard from anywhere, phone or laptop |
 | Support means "get on the right SSID first" | SSH from any machine on the tailnet |
-| `192.168.86.37` chased across DHCP leases | stable `nightwatch` MagicDNS name |
-| Jessica can't check on Miles from away | she can |
+| LAN address chased across DHCP leases | stable `nightwatch` MagicDNS name |
+| No way to check the monitored person from away | remote view works |
 | No path in if home routing breaks | independent path in |
 
 ## Existing tailnet
 
-`rlmattax@gmail.com`, MagicDNS on. Members: this desktop (`100.94.6.32`),
-`DESKTOP-77JAR58`, `bob-Nimo-linux`. Adding the Pi is joining a mesh, not
-standing one up. Phones are not on it yet and would need to be for remote
-dashboard access.
+If you already run a tailnet with MagicDNS enabled, adding the monitor is
+joining a mesh rather than standing one up. Phones need to be members too if
+you want the dashboard remotely.
 
 ## Design rules
 
@@ -40,9 +39,9 @@ dashboard access.
    The Pi should not be able to initiate connections *to* other tailnet nodes;
    it is the most physically exposed device on the network and sits in a
    child's bedroom.
-4. **Do not use Tailscale SSH's `check` mode on the Pi.** Bob's laptop already
-   runs it, and plain `ssh`/`scp` hang forever at the userauth banner waiting
-   for a browser re-auth that never comes in an automated context. Use
+4. **Do not use Tailscale SSH's `check` mode on the monitor.** Plain `ssh` and
+   `scp` hang forever at the userauth banner waiting for a browser re-auth that
+   never arrives in an automated context. Use
    `"action": "accept"` for `tag:nightwatch`, or leave Tailscale SSH off
    entirely and keep key-based OpenSSH.
 5. **Resource cost is real but small** — `tailscaled` is ~30-50 MB RSS. The Pi
@@ -59,7 +58,7 @@ sudo tailscale up --hostname=nightwatch --advertise-tags=tag:nightwatch --ssh=fa
 ```
 
 Then in the admin console: approve the node, confirm the tag, and add ACL
-grants for 22/443 from Bob's user. MagicDNS gives `nightwatch.<tailnet>.ts.net`.
+grants for 22/443 from your user. MagicDNS gives `nightwatch.<tailnet>.ts.net`.
 
 Optionally `tailscale cert` for a real TLS certificate on that name, which
 would retire the self-signed CA warning — but only after the CA question is
@@ -74,7 +73,7 @@ settled, since the current cert is what phones already trust.
 
 ## Open questions
 
-- Put the phones on the tailnet too? Needed for remote dashboard, but a phone
+- Put phones on the tailnet too? Needed for remote dashboard, but a phone
   that routes through a mesh has its own battery and connectivity trade-offs.
   Alerts must not care either way.
 - Use `tailscale cert` and retire the self-signed CA, or keep the CA so the

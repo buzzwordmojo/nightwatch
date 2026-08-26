@@ -20,7 +20,7 @@ def cfg(**kw) -> PushConfig:
     base = dict(
         enabled=True,
         provider=PushProvider.NTFY,
-        ntfy_server="https://ntfy.knightwatcher.com",
+        ntfy_server="https://ntfy.example.com",
         ntfy_topic="alerts",
     )
     base.update(kw)
@@ -71,7 +71,7 @@ def test_private_server_with_credentials_is_complete():
 def test_public_ntfy_sh_does_not_require_credentials():
     """ntfy.sh accepts anonymous publishes, so credentials are genuinely optional."""
     assert _ntfy_is_public("https://ntfy.sh")
-    assert not _ntfy_is_public("https://ntfy.knightwatcher.com")
+    assert not _ntfy_is_public("https://ntfy.example.com")
     assert _missing_push_settings(cfg(ntfy_server="https://ntfy.sh")) == []
 
 

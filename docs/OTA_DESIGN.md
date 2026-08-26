@@ -73,8 +73,8 @@ network, and works when the update server is exactly what is broken.
 These are the point of the exercise, not decoration.
 
 1. **Refuse while occupied.** The sensor already knows if someone is in bed.
-   An update while Miles sleeps is not a maintenance window; it is a blind
-   spot. Require the bed empty, or an explicit `force` from a human who
+   An update while the monitored person sleeps is not a maintenance window;
+   it is a blind spot. Require the bed empty, or an explicit `force` from a human who
    understands what they are doing.
 2. **Health-check after restart, auto-rollback on failure.** "Service started"
    is not health — this project has already shipped a service that started
