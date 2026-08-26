@@ -6,20 +6,39 @@ Nightwatch monitors a sleeping child for signs of seizure activity using multipl
 
 ## Features
 
-- **Non-contact monitoring** - Nothing attached to the child
-- **Multiple sensors** - Radar, audio, and bed vibration (BCG)
-- **Real-time alerts** - Audio alarms + push notifications
-- **Web dashboard** - Monitor from any device
-- **Remote access** - Check on things while out (via Tailscale)
-- **Open source** - Build your own, modify as needed
+- **Non-contact monitoring** - nothing attached to the sleeper
+- **Measured vitals** - respiration and heart rate from a 60GHz radar
+- **Real-time alerts** - push notifications via ntfy (self-hosted or ntfy.sh)
+- **Web dashboard** - live waveforms plus stored history
+- **Off-device watchdog** - an external service notices if the monitor dies
+- **Open source** - build your own, modify as needed
+
+> **What this is not.** It cannot detect seizures directly. It measures
+> respiration, heart rate and movement, and alerts on thresholds you
+> configure. Subtle or non-convulsive seizure types produce little or no
+> movement and may not be visible to any radar. Treat it as an additional set
+> of eyes, never as a medical device or a replacement for one.
 
 ## Sensors
 
 | Sensor | Detects | Hardware | Status |
 |--------|---------|----------|--------|
-| **Radar** | Respiration rate, movement, presence | HLK-LD2450 (24GHz mmWave) | Testing soon |
-| **Audio** | Breathing sounds, seizure sounds, silence | Lavalier / USB microphone | Testing soon |
+| **Vitals radar** | Respiration **and heart rate** (measured), presence | HLK-LD6002 (60GHz FMCW) | **Working** — recommended |
+| **Presence radar** | Respiration (inferred), movement, position | HLK-LD2450 (24GHz mmWave) | Supported |
+| **Audio** | Breathing sounds, seizure sounds, silence | Lavalier / USB microphone | Untested |
+| **BCG** | Heart rate, respiration, bed occupancy | Piezo + MCP3008 over SPI | Written, not wired up |
 | **Capacitive** | Heart rate, respiration, bed occupancy | FDC1004 + electrode | Planned |
+
+**Which radar to buy:** the **LD6002** measures respiration and heart rate
+directly and is the recommended sensor. The LD2450 tracks position and
+*infers* breathing from sub-millimetre chest movement — it works, but it
+cannot give you a heart rate. Set `detectors.radar.model` to `ld6002` or
+`ld2450` to pick.
+
+> ⚠️ **Read [docs/MOUNTING.md](docs/MOUNTING.md) before buying or installing.**
+> With a 60GHz vitals radar, *aim decides whether the system works at all* —
+> measured lock quality ranged from 26% to 100% on the same hardware purely
+> from how it was pointed.
 
 See [docs/SENSORS.md](docs/SENSORS.md) for detailed sensor documentation and [docs/FUSION.md](docs/FUSION.md) for how signals combine.
 
@@ -31,8 +50,8 @@ See [SHOPPING_LIST.md](hardware/SHOPPING_LIST.md) for complete parts list.
 
 **Minimum:**
 - Raspberry Pi 5 (4GB)
-- HLK-LD2450 radar module
-- CP2102 USB-to-UART adapter
+- HLK-LD6002 vitals radar (recommended) or HLK-LD2450
+- USB-to-UART adapter — some LD6002 carrier boards have USB-C built in
 - USB extension cable
 - Power supply, SD card
 
@@ -40,7 +59,7 @@ See [SHOPPING_LIST.md](hardware/SHOPPING_LIST.md) for complete parts list.
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourrepo/nightwatch.git
+git clone https://github.com/buzzwordmojo/nightwatch.git
 cd nightwatch
 
 # Install Python package
