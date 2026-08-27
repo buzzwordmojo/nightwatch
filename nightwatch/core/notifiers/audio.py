@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Any
 
 from nightwatch.core.config import AudioNotifierConfig
 from nightwatch.core.events import Alert, EventSeverity
@@ -120,7 +119,7 @@ class AudioNotifier(BaseNotifier):
             try:
                 await asyncio.wait_for(self._stop_event.wait(), timeout=1.0)
                 break  # Stop event was set
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass  # Continue playing
 
         self._playing = False
@@ -144,8 +143,8 @@ class AudioNotifier(BaseNotifier):
     async def _play_sound(self, sound_file: Path, volume: int) -> None:
         """Play a sound file using system audio."""
         try:
-            import sounddevice as sd
             import numpy as np
+            import sounddevice as sd
 
             # For now, generate a simple tone if we can't load the file
             # In production, use scipy.io.wavfile or similar to load WAV
@@ -224,8 +223,8 @@ class AudioNotifier(BaseNotifier):
     async def _play_software_beep(self, pattern: list[tuple[float, float]]) -> None:
         """Play pattern using software beep (for development)."""
         try:
-            import sounddevice as sd
             import numpy as np
+            import sounddevice as sd
 
             sample_rate = 44100
             frequency = 2000  # Hz

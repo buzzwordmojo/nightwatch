@@ -12,14 +12,15 @@ from __future__ import annotations
 
 import os
 import re
-from pathlib import Path
-from typing import Any, TypeVar, Generic, Type, Callable
+from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, TypeVar
 
 import yaml
 from pydantic import BaseModel, Field, field_validator
+from watchdog.events import FileModifiedEvent, FileSystemEventHandler
 from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler, FileModifiedEvent
 
 T = TypeVar("T")
 

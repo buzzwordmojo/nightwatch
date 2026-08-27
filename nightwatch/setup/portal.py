@@ -13,12 +13,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Request, Response, HTTPException
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
-import pydantic
-from pydantic import BaseModel, Field
 import uvicorn
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
@@ -163,7 +162,6 @@ class CaptivePortal:
         @app.get("/api/setup/certificate")
         async def download_certificate() -> Response:
             """Download CA certificate for device installation (Android)."""
-            import base64
             ca_cert_path = Path("/etc/nightwatch/certs/nightwatch-ca.crt")
             if not ca_cert_path.exists():
                 raise HTTPException(status_code=404, detail="Certificate not found")
@@ -779,7 +777,7 @@ def main():
     async def on_wifi_configured(ssid: str):
         print(f"✅ WiFi configured: {ssid}")
         if dev_mode:
-            print(f"   (dev mode - not actually connecting)")
+            print("   (dev mode - not actually connecting)")
 
     portal = CaptivePortal(
         host=args.host,
@@ -791,8 +789,6 @@ def main():
 
     # In dev mode, patch the save function to use temp directory
     if dev_mode:
-        original_save = portal._save_wifi_credentials
-
         async def mock_save(credentials: WiFiCredentials) -> None:
             await asyncio.sleep(2.5)  # Simulate WiFi connection delay
             config_file = temp_dir / "wifi.conf"

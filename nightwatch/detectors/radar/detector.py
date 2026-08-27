@@ -15,14 +15,14 @@ import time
 from typing import Any
 
 from nightwatch.core.config import RadarConfig
-from nightwatch.core.events import Event, EventState, Publisher
-from nightwatch.detectors.base import BaseDetector, CalibrationResult, DetectorStatus
+from nightwatch.core.events import EventState, Publisher
+from nightwatch.detectors.base import BaseDetector, CalibrationResult
 from nightwatch.detectors.radar.ld2450 import LD2450Driver, LD2450Frame, LD2450Target
 from nightwatch.detectors.radar.ld6002 import LD6002Driver, LD6002Reading
 from nightwatch.detectors.radar.processing import (
-    RespirationExtractor,
     HeartRateEstimator,
     MovementDetector,
+    RespirationExtractor,
 )
 
 

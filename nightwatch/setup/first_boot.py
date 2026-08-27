@@ -126,7 +126,7 @@ def _check_wifi_configured(wifi_config_path: Path) -> bool:
         content = wifi_config_path.read_text().strip()
         # Must have at least an SSID
         return "ssid=" in content.lower() and len(content) > 10
-    except (OSError, IOError) as e:
+    except OSError as e:
         logger.warning(f"Could not read WiFi config: {e}")
         return False
 
@@ -139,7 +139,7 @@ def _check_name_configured(name_path: Path) -> bool:
     try:
         name = name_path.read_text().strip()
         return len(name) >= 1
-    except (OSError, IOError) as e:
+    except OSError as e:
         logger.warning(f"Could not read monitor name: {e}")
         return False
 

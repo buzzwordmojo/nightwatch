@@ -85,7 +85,14 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
-ignore = ["E501"]
+# E501: line length is handled by the formatter, not the linter.
+# UP042: would rewrite `class X(str, Enum)` as `class X(StrEnum)`. That is
+#   not a cosmetic change -- StrEnum alters what str() and f-strings produce
+#   for a member (the value, rather than "Class.MEMBER"). AlertLevel,
+#   EventState, EventSeverity, PushProvider and DetectorStatus all cross the
+#   API boundary to the dashboard, so adopting it means auditing every
+#   stringification site first. Tracked as real work, not a lint fix.
+ignore = ["E501", "UP042"]
 
 [tool.mypy]
 python_version = "3.11"

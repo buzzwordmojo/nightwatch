@@ -17,11 +17,10 @@ from __future__ import annotations
 
 import asyncio
 import struct
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import AsyncIterator
 
 import serial_asyncio
-
 
 # Frame markers
 FRAME_HEADER = bytes([0xAA, 0xFF, 0x03, 0x00])
@@ -193,7 +192,7 @@ class LD2450Driver:
         # Read enough bytes for a frame
         try:
             data = await asyncio.wait_for(self._reader.read(64), timeout=1.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return None
 
         if not data:
@@ -249,7 +248,7 @@ class LD2450Driver:
                         # Invalid frame, skip header and try again
                         buffer = buffer[4:]
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue
             except Exception:
                 if self._connected:
@@ -274,7 +273,7 @@ class LD2450Driver:
         try:
             response = await asyncio.wait_for(self._reader.read(256), timeout=1.0)
             return response
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return b""
 
     async def enable_config_mode(self) -> bool:

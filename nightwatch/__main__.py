@@ -15,23 +15,23 @@ import sys
 from pathlib import Path
 
 from nightwatch import __version__
-from nightwatch.core.config import Config, FusionConfig, FusionRule, FusionRuleSource
-from nightwatch.core.events import EventBus
-from nightwatch.core.engine import AlertEngine
+from nightwatch.bridge.convex import ConvexBridge, ConvexConfig, ConvexEventHandler
 from nightwatch.core.alert_rules import AlertRulesSync
+from nightwatch.core.config import Config, FusionConfig, FusionRule, FusionRuleSource
+from nightwatch.core.engine import AlertEngine
+from nightwatch.core.events import EventBus
 from nightwatch.core.fusion import FusionEngine
 from nightwatch.core.heartbeat import HeartbeatReporter
 from nightwatch.core.notifiers.audio import AudioNotifier
 from nightwatch.core.notifiers.push import PushConfig, PushNotifier, PushProvider
-from nightwatch.detectors.radar import RadarDetector, LD6002Detector
-from nightwatch.detectors.radar.detector import MockRadarDetector
+from nightwatch.dashboard.server import DashboardServer
 from nightwatch.detectors.audio.detector import AudioDetector, MockAudioDetector
 from nightwatch.detectors.bcg.detector import MockBCGDetector
-from nightwatch.dashboard.server import DashboardServer
-from nightwatch.bridge.convex import ConvexBridge, ConvexConfig, ConvexEventHandler
-from nightwatch.setup.portal import CaptivePortal
+from nightwatch.detectors.radar import LD6002Detector, RadarDetector
+from nightwatch.detectors.radar.detector import MockRadarDetector
+from nightwatch.setup.first_boot import SetupState, detect_setup_state
 from nightwatch.setup.hotspot import HotspotManager
-from nightwatch.setup.first_boot import detect_setup_state, SetupState
+from nightwatch.setup.portal import CaptivePortal
 
 
 def _ntfy_is_public(server: str) -> bool:

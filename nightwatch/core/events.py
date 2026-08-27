@@ -7,13 +7,13 @@ for inter-process communication between detectors and the alert engine.
 
 from __future__ import annotations
 
-import asyncio
 import time
 import uuid
 from collections import deque
-from dataclasses import dataclass, field, asdict
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Awaitable, Optional
+from typing import Any
 
 import msgpack
 import zmq
@@ -133,8 +133,8 @@ class Alert:
     contributing_events: tuple[Event, ...] = field(default_factory=tuple)
     acknowledged: bool = False
     resolved: bool = False
-    acknowledged_at: Optional[float] = None
-    resolved_at: Optional[float] = None
+    acknowledged_at: float | None = None
+    resolved_at: float | None = None
 
     @classmethod
     def create(
