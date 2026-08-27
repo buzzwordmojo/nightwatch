@@ -213,6 +213,7 @@ class TestConvexBridge:
                     "component": "radar",
                     "status": "online",
                     "message": "Connected",
+                    "mock": False,
                 },
             )
 

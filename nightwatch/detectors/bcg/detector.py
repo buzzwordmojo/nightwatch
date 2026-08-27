@@ -17,9 +17,9 @@ from nightwatch.core.config import BCGConfig
 from nightwatch.core.events import EventState, Publisher
 from nightwatch.detectors.base import BaseDetector, CalibrationResult
 from nightwatch.detectors.bcg.processing import (
+    BCGAnalysis,
     BCGProcessor,
     BCGProcessorConfig,
-    BCGAnalysis,
 )
 
 

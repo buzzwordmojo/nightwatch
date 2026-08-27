@@ -1,7 +1,7 @@
 """Core modules for Nightwatch."""
 
-from nightwatch.core.events import Event, Alert, EventState, EventSeverity, EventBus
-from nightwatch.core.fusion import FusionEngine, FusedSignal, SignalValue
+from nightwatch.core.events import Alert, Event, EventBus, EventSeverity, EventState
+from nightwatch.core.fusion import FusedSignal, FusionEngine, SignalValue
 
 __all__ = [
     "Event",

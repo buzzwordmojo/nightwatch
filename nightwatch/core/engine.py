@@ -13,19 +13,20 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Awaitable
+from typing import Any
 
-from nightwatch.core.config import AlertEngineConfig, AlertRule as AlertRuleConfig
+from nightwatch.core.config import AlertEngineConfig
+from nightwatch.core.config import AlertRule as AlertRuleConfig
 from nightwatch.core.events import (
-    Event,
     Alert,
-    EventState,
-    EventSeverity,
-    EventBus,
+    Event,
     EventBuffer,
-    Publisher,
+    EventBus,
+    EventSeverity,
+    EventState,
     Subscriber,
 )
 

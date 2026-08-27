@@ -18,16 +18,16 @@ import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request, Response
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+import httpx
+import uvicorn
+from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-import uvicorn
-import httpx
 
 from nightwatch.core.config import DashboardConfig
-from nightwatch.core.events import Event, Alert, EventBuffer
-from nightwatch.core.engine import AlertEngine, AlertState, AlertLevel
+from nightwatch.core.engine import AlertEngine
+from nightwatch.core.events import Event, EventBuffer
 from nightwatch.setup.first_boot import mark_configured
 
 
@@ -320,8 +320,9 @@ class DashboardServer:
 
     async def _proxy_convex_ws(self, websocket: WebSocket, path: str):
         """Proxy WebSocket connections to Convex backend."""
-        import websockets
         import logging
+
+        import websockets
 
         logger = logging.getLogger(__name__)
         await websocket.accept()
@@ -330,7 +331,7 @@ class DashboardServer:
 
         try:
             async with websockets.connect(convex_ws_url) as convex_ws:
-                print(f"[WS] Connected to Convex backend", flush=True)
+                print("[WS] Connected to Convex backend", flush=True)
                 client_closed = False
                 convex_closed = False
                 msg_count = [0, 0]  # [to_convex, to_client]
@@ -1355,8 +1356,9 @@ class DashboardServer:
         If request body contains {restart: false}, skips systemctl restart
         (for use with live preview where settings are already applied in memory).
         """
-        import yaml
         import subprocess
+
+        import yaml
 
         # Check if caller wants to skip restart
         body = {}
@@ -1456,8 +1458,6 @@ class DashboardServer:
 
     async def _update_check(self) -> dict[str, Any]:
         """Check if an update is available by comparing local vs remote HEAD."""
-        repo_dir = self._REPO_DIR
-
         # Check for git repo (use sudo -u pi to avoid permission issues)
         check = await asyncio.to_thread(self._git, "status", timeout=5)
         if check.returncode != 0:
@@ -1535,8 +1535,8 @@ class DashboardServer:
             lines = text.split("\n") if text else []
 
             # Determine status from log content
-            complete = any("UPDATE COMPLETE" in l for l in lines)
-            error = any("ERROR" in l for l in lines)
+            complete = any("UPDATE COMPLETE" in line for line in lines)
+            error = any("ERROR" in line for line in lines)
 
             if complete:
                 status = "complete"
@@ -2247,7 +2247,7 @@ class DashboardServer:
                     )
                     # Handle any incoming commands
                     await self._handle_ws_message(websocket, data)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # Send ping to keep alive
                     await websocket.send_json({"type": "ping"})
 
@@ -2395,7 +2395,7 @@ class DashboardServer:
             if hasattr(self, "_server_task") and self._server_task:
                 try:
                     await asyncio.wait_for(self._server_task, timeout=5.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     self._server_task.cancel()
                 except asyncio.CancelledError:
                     pass

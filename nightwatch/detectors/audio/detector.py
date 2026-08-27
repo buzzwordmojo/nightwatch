@@ -17,12 +17,12 @@ import numpy as np
 
 from nightwatch.core.config import AudioConfig
 from nightwatch.core.events import EventState, Publisher
-from nightwatch.detectors.base import BaseDetector, CalibrationResult
 from nightwatch.detectors.audio.processing import (
     AudioProcessor,
     AudioProcessorConfig,
     BreathingAnalysis,
 )
+from nightwatch.detectors.base import BaseDetector, CalibrationResult
 
 logger = logging.getLogger(__name__)
 
@@ -220,7 +220,7 @@ class AudioDetector(BaseDetector):
                     await self._emit_analysis(analysis)
                     last_emit = timestamp
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # No audio received, emit warning
                 await self._emit_event(
                     state=EventState.UNCERTAIN,
@@ -472,7 +472,7 @@ class AudioDetector(BaseDetector):
                 )
                 energy = float(np.sqrt(np.mean(audio ** 2)))
                 noise_samples.append(energy)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
 
         if not noise_samples:

@@ -11,9 +11,8 @@ Processes audio input to detect:
 from __future__ import annotations
 
 import logging
-import time
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -1030,7 +1029,7 @@ class NoiseReducer:
         dominant_freqs: list[dict],
     ) -> str:
         labels = [f["label"] for f in dominant_freqs]
-        has_hum = any(l in ("Electrical hum", "Electrical harmonic") for l in labels)
+        has_hum = any(label in ("Electrical hum", "Electrical harmonic") for label in labels)
 
         # Check if spectrum is roughly flat
         lo, mid, hi = band_energy["low"], band_energy["mid"], band_energy["high"]
@@ -1043,7 +1042,7 @@ class NoiseReducer:
             return "Broadband noise"
         if has_hum and lo > 50:
             return "Low-frequency hum"
-        if mid > 40 and any(l == "Fan / HVAC" for l in labels):
+        if mid > 40 and any(label == "Fan / HVAC" for label in labels):
             return "Mid-range fan noise"
         if hi > 40:
             return "High-frequency hiss"

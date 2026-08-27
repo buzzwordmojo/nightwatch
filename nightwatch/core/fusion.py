@@ -13,11 +13,11 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Awaitable
 
-from nightwatch.core.events import Event, EventState, EventBus, Publisher, Subscriber
-from nightwatch.core.config import FusionConfig, FusionRule, FusionRuleSource
+from nightwatch.core.config import FusionConfig, FusionRule
+from nightwatch.core.events import Event, EventBus, EventState, Publisher, Subscriber
 
 
 @dataclass

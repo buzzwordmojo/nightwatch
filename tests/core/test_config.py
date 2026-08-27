@@ -253,7 +253,10 @@ class TestDashboardConfig:
         """Default values are sensible."""
         config = DashboardConfig()
         assert config.host == "0.0.0.0"
-        assert config.port == 5000
+        # The dashboard serves HTTPS on 443 by default (see DashboardConfig);
+        # this asserted 5000 from before that change.
+        assert config.port == 443
+        assert config.ssl_enabled is True
         assert config.debug is False
         assert config.auth_enabled is False
 
