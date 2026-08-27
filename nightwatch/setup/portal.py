@@ -274,10 +274,13 @@ class CaptivePortal:
                 # Store credentials
                 self._wifi_credentials = credentials
 
-                # Save credentials (don't connect yet - hotspot is using wlan0)
-                from nightwatch.setup.provisioning import WiFiProvisioner
-                provisioner = WiFiProvisioner()
-                await provisioner.save_credentials(credentials.ssid, credentials.password)
+                # Save credentials (don't connect yet - hotspot is using wlan0).
+                # Go through the _save_wifi_credentials seam rather than
+                # constructing a WiFiProvisioner inline -- dev mode and the
+                # tests both override that method, and inlining the provisioner
+                # here silently bypassed both, writing to the real
+                # /etc/nightwatch on developer machines.
+                await self._save_wifi_credentials(credentials)
 
                 # Mark system as configured
                 from nightwatch.setup.first_boot import mark_configured

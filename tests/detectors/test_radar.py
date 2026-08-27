@@ -308,8 +308,11 @@ class TestRespirationExtractor:
 
     def test_requires_minimum_data(self, extractor):
         """Extractor returns invalid until enough data collected."""
-        # Only 5 seconds of data (need at least 10)
-        for i in range(50):
+        # RespirationExtractor.update() requires sample_rate * 5 samples before
+        # it will analyse at all. At 10 Hz that is 50 samples, so feed 30
+        # (3 seconds) to stay unambiguously under the threshold -- the previous
+        # 50 sat exactly ON the boundary and passed the guard.
+        for i in range(30):
             result = extractor.update(1500.0 + i, float(i) / 10.0)
 
         assert result.is_valid is False
